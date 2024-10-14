@@ -22,7 +22,7 @@ def read_boxes(file_path: str) -> List[Tuple[int, int, int]]:
 
 def train(file_path: str = "boxes.dat"):
     # Thiết lập môi trường
-    bin_size = (10, 10, 10)  # Ví dụ kích thước thùng
+    bin_size = (20, 20, 20)  # Ví dụ kích thước thùng
     items = read_boxes(file_path)
     env = BinPacking3DEnv(bin_size, items)
     
@@ -147,7 +147,7 @@ def compute_loss(batch: List[Tuple[Any, Any, float]], policy_net: PolicyNetwork,
     loss = value_loss + policy_loss
     return loss
 
-def decode_action(action: int, bin_size: Tuple[int, int, int] = (10, 10, 10), num_rotations: int = 6) -> Tuple[int, int, int]:
+def decode_action(action: int, bin_size: Tuple[int, int, int] = (20, 20, 20), num_rotations: int = 6) -> Tuple[int, int, int]:
     """
     Giải mã hành động thành vị trí x, y và hướng xoay.
     Giả sử không gian hành động được định nghĩa như trong BinPacking3DEnv.
@@ -171,6 +171,7 @@ def plot_loss(loss_history: List[float], num_episodes: int):
     plt.title('Loss over Episodes')
     plt.legend()
     plt.grid(True)
+    plt.savefig("images/loss.png")
     plt.show()
 
 def plot_reward(reward_history: List[float], num_episodes: int):
@@ -185,6 +186,7 @@ def plot_reward(reward_history: List[float], num_episodes: int):
     plt.title('Total Reward over Episodes')
     plt.legend()
     plt.grid(True)
+    plt.savefig("images/reward.png")
     plt.show()
 
 if __name__ == "__main__":
