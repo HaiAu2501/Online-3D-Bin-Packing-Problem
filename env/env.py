@@ -4,7 +4,7 @@ import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
 from typing import Tuple, List, Dict
-from env.ems import EMSManager
+from ems import EMSManager
 
 class BinPacking3DEnv(gym.Env):
     """
@@ -18,14 +18,14 @@ class BinPacking3DEnv(gym.Env):
         num_rotations: int = 2
     ):
         super(BinPacking3DEnv, self).__init__()
-        '''
+        """
         :param bin_size: The size of the bin (W, L, H).
         :param items: A list of items, each item is a vector of 3 integers (w, l, h).
         :param buffer_size: The size of the buffer to store k items.
         :param num_rotations: The number of rotations for each item.
         
         The default number of rotations is 2 because robots can only rotate items by 90 degrees.
-        '''
+        """
         self.W, self.L, self.H = bin_size
         self.items: List[Tuple[int, int, int]] = items
         self.buffer_size: int = buffer_size
@@ -38,13 +38,13 @@ class BinPacking3DEnv(gym.Env):
             raise ValueError("The number of rotations must be between 1 and 6.")
 
         self.current_item_index: int = 0
-        self.height_map: np.ndarray = np.zeros((self.W, self.L), dtype=np.float32)
+        self.height_map: np.ndarray = np.zeros((self.W, self.L), dtype=np.int32)
         self.placed_items: List[Dict] = [] # To store placed items' positions and rotations
 
         # Intialize EMSManager
         self.ems_manager = EMSManager(bin_size=bin_size)
         
-        '''
+        """
         Define action space:
         - Action is a tuple of 4 integers (x, y, rotation, item_index).
         - x: Position x in the bin (0 to W - 1).
@@ -52,7 +52,7 @@ class BinPacking3DEnv(gym.Env):
         - rotation: Rotation of the item (0 to num_rotations - 1).
         - item_index: Index of the item in the buffer (0 to buffer_size - 1).
         - The total number of actions is W x L x (num_rotations) x (buffer_size).
-        '''
+        """
         self.action_space = spaces.Tuple((
             spaces.Discrete(self.W), # x
             spaces.Discrete(self.L), # y
@@ -60,12 +60,12 @@ class BinPacking3DEnv(gym.Env):
             spaces.Discrete(self.buffer_size) # item_index
         ))
         
-        '''
+        """
         Define observation space:
         - A buffer with k items, each item is a vector of 3 integers (width, length, height).
         - A list of empty maximal spaces (EMSs) in the bin.
         - Each EMS is a vector of 6 integers: left-back-bottom corner and right-front-top corner. 
-        '''
+        """
         self.max_ems = self.W * self.L * self.H
         self.observation_space = spaces.Dict({
             'height_map': spaces.Box(
@@ -87,8 +87,6 @@ class BinPacking3DEnv(gym.Env):
                 dtype=np.int32
             ),
         })
-
-        self.ems_list: List[Tuple[int, int, int, int, int, int]] = [(0, 0, 0, self.W, self.L, self.H)]
         
     def reset(self):
         """
@@ -122,6 +120,8 @@ class BinPacking3DEnv(gym.Env):
         - done: The episode is done when all items are placed.
         - truncated: Set to be false.
         - info: Additional information.
+
+        - Action is always valid because of the action mask we use in the training loop.
         """
         done = False
         truncated = False
@@ -132,12 +132,6 @@ class BinPacking3DEnv(gym.Env):
         x, y, rotation, item_index = action 
 
         selected_item = self.buffer[item_index]
-        if selected_item == (0, 0, 0):
-            # Skip the action if the item is not selected
-            done = True
-            reward = 0.0
-            return self._get_observation(), reward, done, truncated, info
-
         rotated_item = self._get_rotated_item(selected_item, rotation)
         rotated_w, rotated_l, rotated_h = rotated_item
 
@@ -185,9 +179,8 @@ class BinPacking3DEnv(gym.Env):
         return {
             'height_map': self.height_map,
             'buffer': np.array(self.buffer, dtype=np.int32),
-            'ems': np.array(self.ems_list)
+            'ems': np.array(self.ems_manager.ems_list, dtype=np.int32)
         }
-
     
     def _get_rotated_item(self, item: Tuple[int, int, int], rotation: int) -> Tuple[int, int, int]:
         """
@@ -209,7 +202,7 @@ class BinPacking3DEnv(gym.Env):
         else:
             raise ValueError(f"Invalid rotation: {rotation}")
 
-    def get_action_mask(self) -> np.ndarray:
+    def generate_action_mask(self) -> np.ndarray:
         """
         Get the action mask for the current state.
 
@@ -222,8 +215,8 @@ class BinPacking3DEnv(gym.Env):
 
         for buffer_idx, item in enumerate(self.buffer):
             if item == (0, 0, 0):
-                # All actions are valid
-                action_mask[:, :, :, buffer_idx] = 1
+                # All actions are invalid (this is a padding item)
+                continue
 
             for rot in range(self.num_rotations):
                 rotated_box = self._get_rotated_item(item, rot)
@@ -253,3 +246,24 @@ class BinPacking3DEnv(gym.Env):
                         action_mask[x_pos, y_pos, rot, buffer_idx] = 1
 
         return action_mask
+
+    def render(self):
+        """
+        Render the environment.
+        """
+        print("\nCurrent height map:")
+        for y in reversed(range(self.height_map.shape[1])):
+            row = ""
+            for x in range(self.height_map.shape[0]):
+                row += f"{self.height_map[x][y]:2} "
+            print(row)
+        self.ems_manager.print_ems_list()
+        print("\nBuffer:")
+        for item in self.buffer:
+            print(item)
+
+    def close(self):
+        """
+        Close the environment.
+        """
+        pass

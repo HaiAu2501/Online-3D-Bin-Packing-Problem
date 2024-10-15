@@ -1,185 +1,139 @@
-# mcts.py
+# search/mcts.py
 
 import math
-import numpy as np
-from typing import Optional, Dict, Any, List, Tuple
-from collections import defaultdict
-import torch
-import torch.nn.functional as F
-from source.networks import PolicyNetwork, ValueNetwork
-from source.environment import BinPacking3DEnv
 import copy
+from typing import Optional, Tuple
+import torch
+import numpy as np
 
-class MCTSNode:
-    """
-    Node trong cây MCTS.
-    """
-    def __init__(self, state: Any, parent: Optional['MCTSNode'] = None):
-        self.state = state
-        self.parent = parent
-        self.children: Dict[int, 'MCTSNode'] = {}
-        self.visit_count = 0
-        self.value_sum = 0.0
-        self.prior = 0.0
-
-    @property
-    def value(self):
-        return self.value_sum / self.visit_count if self.visit_count > 0 else 0.0
+from node import Node
+from models.policy_net import PolicyNetwork
+from models.value_net import ValueNetwork
 
 class MCTS:
-    """
-    Thuật toán MCTS.
-    """
-    def __init__(self, policy_network: PolicyNetwork, value_network: ValueNetwork, env: BinPacking3DEnv, 
-                 c_puct: float = 1.4, num_simulations: int = 100):
+    def __init__(
+        self,
+        env,
+        policy_network: PolicyNetwork,
+        value_network: ValueNetwork,
+        num_simulations: int = 1000,
+        c_param: float = math.sqrt(2)
+    ):
+        """
+        Khởi tạo thuật toán MCTS.
+
+        :param env: Môi trường Gym tương ứng.
+        :param policy_network: Mạng Policy.
+        :param value_network: Mạng Value.
+        :param num_simulations: Số lần mô phỏng trong mỗi lượt tìm kiếm.
+        :param c_param: Hệ số cân bằng giữa khai thác và khám phá trong UCB.
+        """
+        self.env = env
         self.policy_network = policy_network
         self.value_network = value_network
-        self.env = env
-        self.c_puct = c_puct
         self.num_simulations = num_simulations
-        self.root: Optional[MCTSNode] = None
+        self.c_param = c_param
+        self.root = Node(state=self._get_env_state())
 
-    def search(self, initial_state: Any) -> Dict:
+    def _get_env_state(self):
         """
-        Thực hiện tìm kiếm MCTS từ trạng thái ban đầu.
+        Lấy trạng thái hiện tại của môi trường.
+
+        :return: Một bản sao của môi trường hiện tại.
         """
-        self.root = MCTSNode(state=initial_state)
-        for simulation in range(1, self.num_simulations + 1):
+        # Giả sử môi trường hỗ trợ copy.deepcopy
+        return copy.deepcopy(self.env)
+
+    def search(self):
+        """
+        Thực hiện tìm kiếm MCTS để chọn hành động tốt nhất từ trạng thái gốc.
+        """
+        for _ in range(self.num_simulations):
             node = self.root
-            env_clone = self._clone_env(self.env)
-            reward = 0.0  # Khởi tạo reward mặc định
-            done = False   # Khởi tạo done mặc định
+            state = self._get_env_state()
 
-            # Selection
-            while node.children and not done:
-                action, node = self._select_child(node)
-                state, step_reward, done, truncated, _ = env_clone.step(action)
-                reward += step_reward
-                if done:
-                    break
+            # SELECTION
+            while node.is_fully_expanded() and node.children:
+                node = node.best_child(self.c_param)
+                action = node.action
+                state.step(action)
 
-            # Expansion
-            if not done and not env_clone.current_item_index >= len(env_clone.items):
-                valid_actions = self._get_valid_actions(env_clone)
-                if node.visit_count > 0 and valid_actions:
-                    # Node chưa được mở rộng
-                    policy, value = self._evaluate(env_clone)
-                    if not policy:
-                        # Không có hành động hợp lệ từ policy mạng, không mở rộng node
-                        continue
-                    for action in valid_actions:
-                        node.children[action] = MCTSNode(state=None, parent=node)
-                        node.children[action].prior = policy.get(action, 1e-6)  # Đảm bảo không bằng 0
-                    # Sử dụng giá trị từ mạng value làm reward
-                    reward += value
-                    node.value_sum += value
-                    node.visit_count += 1
-                elif valid_actions:
-                    # Node đã được mở rộng, nhưng chưa có children
-                    for action in valid_actions:
-                        node.children[action] = MCTSNode(state=None, parent=node)
-                        node.children[action].prior = 1.0 / len(valid_actions)  # Uniform prior
-            else:
-                # Leaf node (episode kết thúc)
-                if done:
-                    # Reward đã được cộng trong quá trình selection
-                    pass
-                else:
-                    # Nếu không còn vật phẩm để đặt, có thể thêm một reward tùy chỉnh hoặc giữ reward hiện tại
-                    pass
+            # EXPANSION
+            if not node.is_fully_expanded():
+                node = node.expand()
+                action = node.action
+                state.step(action)
 
-            # Backpropagation
+            # SIMULATION
+            reward, done = self._simulate(state)
+
+            # BACKPROPAGATION
             self._backpropagate(node, reward)
 
-        # Sau khi tìm kiếm, trích xuất chính sách từ root node
-        policy = self._extract_policy(self.root)
-        return policy
+        # CHOOSE THE BEST ACTION
+        best_action = self._get_best_action()
+        return best_action
 
-    def _select_child(self, node: MCTSNode) -> Tuple[int, MCTSNode]:
+    def _simulate(self, state) -> Tuple[float, bool]:
         """
-        Chọn child với giá trị UCT cao nhất.
-        """
-        best_score = -float('inf')
-        best_action = None
-        best_child = None
-        for action, child in node.children.items():
-            uct_score = (child.value +
-                         self.c_puct * child.prior * math.sqrt(node.visit_count) / (1 + child.visit_count))
-            if uct_score > best_score:
-                best_score = uct_score
-                best_action = action
-                best_child = child
-        return best_action, best_child
+        Thực hiện mô phỏng từ trạng thái hiện tại đến khi kết thúc.
 
-    def _evaluate(self, env_clone: BinPacking3DEnv) -> Tuple[Dict[int, float], float]:
+        :param state: Trạng thái môi trường tại thời điểm bắt đầu mô phỏng.
+        :return: Tổng phần thưởng và trạng thái kết thúc.
         """
-        Đánh giá trạng thái bằng mạng policy và value.
-        """
-        observation = env_clone._get_observation()
-        observation_tensor = torch.tensor(observation, dtype=torch.float32).unsqueeze(0)
-        policy_logits = self.policy_network(observation_tensor)
-        policy_probs = F.softmax(policy_logits, dim=-1).detach().numpy()[0]
-        
-        # Lấy danh sách các hành động hợp lệ
-        valid_actions = self._get_valid_actions(env_clone)
-        policy = {action: policy_probs[action] for action in valid_actions}
-        total_prob = sum(policy.values())
-        if total_prob > 0:
-            for action in policy:
-                policy[action] /= total_prob
-        else:
-            # Nếu không có hành động hợp lệ, đặt uniform prior
-            policy = {action: 1.0 / len(valid_actions) for action in valid_actions} if valid_actions else {}
-        
-        # Lấy giá trị từ mạng value
-        value = self.value_network(observation_tensor).item()
-        return policy, value
+        done = False
+        total_reward = 0.0
 
-    def _backpropagate(self, node: MCTSNode, reward: float):
+        while not done:
+            observation = state._get_observation()
+            action_mask = state.generate_action_mask()
+            policy_logits = self.policy_network(torch.tensor(observation, dtype=torch.float32))
+            policy_logits = policy_logits.view(-1)
+            action_mask = torch.tensor(action_mask, dtype=torch.float32).view(-1)
+            masked_logits = policy_logits * action_mask
+            if torch.sum(action_mask) == 0:
+                break  # Không còn hành động hợp lệ
+            action_probs = torch.softmax(masked_logits, dim=0).detach().numpy()
+            action = np.random.choice(len(action_probs), p=action_probs / np.sum(action_probs))
+            # Chuyển đổi chỉ số thành hành động
+            W, L, num_rotations, buffer_size = self.env.W, self.env.L, self.env.num_rotations, self.env.buffer_size
+            x = action // (L * num_rotations * buffer_size)
+            y = (action % (L * num_rotations * buffer_size)) // (num_rotations * buffer_size)
+            rotation = (action % (num_rotations * buffer_size)) // buffer_size
+            item_index = action % buffer_size
+            selected_action = (x, y, rotation, item_index)
+
+            observation, reward, done, truncated, info = state.step(selected_action)
+            total_reward += reward
+
+            if truncated:
+                done = True
+
+        # Đánh giá bằng Value Network
+        final_observation = state._get_observation()
+        value = self.value_network(torch.tensor(final_observation, dtype=torch.float32))
+        value = torch.tanh(value).item()
+        total_reward += value
+
+        return total_reward, done
+
+    def _backpropagate(self, node: Node, reward: float):
         """
-        Cập nhật giá trị và visit count cho các node trong đường dẫn từ node đến root.
+        Cập nhật giá trị và số lượt thăm cho các nút trên đường đi từ nút hiện tại đến gốc.
+
+        :param node: Nút bắt đầu từ nút được mở rộng.
+        :param reward: Giá trị thu được từ mô phỏng.
         """
         while node is not None:
-            node.visit_count += 1
-            node.value_sum += reward
+            node.visits += 1
+            node.value += reward
             node = node.parent
 
-    def _extract_policy(self, node: MCTSNode) -> Dict:
+    def _get_best_action(self) -> Tuple[int, int, int, int]:
         """
-        Trích xuất chính sách từ root node sau khi tìm kiếm.
-        """
-        policy = {}
-        for action, child in node.children.items():
-            policy[action] = child.visit_count
-        # Chuẩn hóa để thành phân phối xác suất
-        total = sum(policy.values())
-        for action in policy:
-            policy[action] /= total
-        return policy
+        Chọn hành động tốt nhất từ nút gốc dựa trên số lượt thăm.
 
-    def _get_valid_actions(self, env_clone: BinPacking3DEnv) -> List[int]:
+        :return: Hành động tốt nhất.
         """
-        Lấy danh sách hành động hợp lệ từ trạng thái hiện tại.
-        """
-        valid_actions = []
-        for action in range(env_clone.action_space.n):
-            x, y, rotation = env_clone._decode_action(action)
-            if env_clone._is_valid_position(x, y, rotation):
-                valid_actions.append(action)
-        return valid_actions
-
-    def _clone_state(self, state: Any) -> Any:
-        """
-        Clone trạng thái để không ảnh hưởng đến trạng thái gốc.
-        """
-        return np.copy(state)
-
-    def _clone_env(self, env: BinPacking3DEnv) -> BinPacking3DEnv:
-        """
-        Clone môi trường để sử dụng trong simulation.
-        """
-        cloned_env = BinPacking3DEnv(bin_size=(env.W, env.L, env.H), items=copy.deepcopy(env.items))
-        cloned_env.current_item_index = env.current_item_index
-        cloned_env.height_map = np.copy(env.height_map)
-        cloned_env.current_height = np.copy(env.current_height)
-        return cloned_env
+        best_child = max(self.root.children.values(), key=lambda n: n.visits)
+        return best_child.action
