@@ -68,6 +68,12 @@ class BinPacking3DEnv(gym.Env):
         '''
         self.max_ems = self.W * self.L * self.H
         self.observation_space = spaces.Dict({
+            'height_map': spaces.Box(
+                low=0,
+                high=self.H,
+                shape=(self.W, self.L),
+                dtype=np.int32
+            ),
             'buffer': spaces.Box(
                 low=0,
                 high=max(self.W, self.L, self.H),
@@ -80,12 +86,6 @@ class BinPacking3DEnv(gym.Env):
                 shape=(self.max_ems, 6),
                 dtype=np.int32
             ),
-            'action_mask': spaces.Box(
-                low=0, 
-                high=1, 
-                shape=(self.W, self.L, self.num_rotations, self.buffer_size),
-                dtype=np.int8
-            )
         })
 
         self.ems_list: List[Tuple[int, int, int, int, int, int]] = [(0, 0, 0, self.W, self.L, self.H)]
@@ -110,12 +110,18 @@ class BinPacking3DEnv(gym.Env):
             else:
                 self.buffer.append((0, 0, 0))
     
-    def step(self, action: Tuple[int, int, int, int]) -> Tuple[np.ndarray, float, bool, bool, Dict]:
+    def step(self, action: Tuple[int, int, int, int]) -> Tuple[Dict, float, bool, bool, Dict]:
         """
         Perform a step in the environment.
 
         :param action: The tuple of (x, y, rotation, item_index).
         :return: A tuple of (observation, reward, done, truncated, info).
+
+        - observation: The current observation.
+        - reward: The agent receives a reward after placing an item.
+        - done: The episode is done when all items are placed.
+        - truncated: Set to be false.
+        - info: Additional information.
         """
         done = False
         truncated = False
@@ -123,31 +129,65 @@ class BinPacking3DEnv(gym.Env):
         reward = 0.0
 
         # Unpack the action
-        x, y, rotation, item_index = action
+        x, y, rotation, item_index = action 
 
         selected_item = self.buffer[item_index]
         if selected_item == (0, 0, 0):
             # Skip the action if the item is not selected
             done = True
+            reward = 0.0
             return self._get_observation(), reward, done, truncated, info
 
         rotated_item = self._get_rotated_item(selected_item, rotation)
         rotated_w, rotated_l, rotated_h = rotated_item
 
-        # Determine the z-coordinate of the item based on the height map
-        z = max([self.height_map[xi][y_] for xi in range(x, x + rotated_w) for y_ in range(y, y + rotated_l)])
-        
+        # Determine z-coordinate based on the height map (place the item on top of the existing items)
+        z = max([self.height_map[xi][yi] for xi in range(x, x + rotated_w) for yi in range(y, y + rotated_l)])
 
+        # Update the height map after placing the item
+        for xi in range(x, x + rotated_w):
+            for yi in range(y, y + rotated_l):
+                self.height_map[xi][yi] = z + rotated_h
+
+        # Update the EMS list after placing the item
+        self.ems_manager.update_ems_after_placement((x, y, z, rotated_w, rotated_l, rotated_h))
+
+        # Record the placed item
+        self.placed_items.append({
+            'position': (x, y, z),
+            'size': rotated_item,
+            'rotation': rotation,
+        })
+
+        # Reward is the percentage of the item's volume in the bin
+        reward += (100 * rotated_w * rotated_l * rotated_h) / (self.W * self.L * self.H)
+
+        # Update the buffer
+        self.buffer.pop(item_index)
+        if self.current_item_index < len(self.items):
+            self.buffer.append(self.items[self.current_item_index])
+            self.current_item_index += 1
+        else:
+            self.buffer.append((0, 0, 0))
+
+        # Check if all items are placed
+        if all(item == (0, 0, 0) for item in self.buffer):
+            done = True
+            reward += 100.0
+            info['sucess'] = True
+
+        return self._get_observation(), reward, done, truncated, info
     
     def _get_observation(self) -> Dict[str, np.ndarray]:
         """
         Create an observation from the current state.
         """
-    
-    def _place_item(self, x: int, y: int, rotation: int, item: Tuple[int, int, int]) -> float:
-        """
-        Update the height_map after placing the item.
-        """
+        return {
+            'height_map': self.height_map,
+            'buffer': np.array(self.buffer, dtype=np.int32),
+            'ems': np.array(self.ems_list)
+        }
+
     
     def _get_rotated_item(self, item: Tuple[int, int, int], rotation: int) -> Tuple[int, int, int]:
         """
@@ -168,3 +208,48 @@ class BinPacking3DEnv(gym.Env):
             return h, l, w
         else:
             raise ValueError(f"Invalid rotation: {rotation}")
+
+    def get_action_mask(self) -> np.ndarray:
+        """
+        Get the action mask for the current state.
+
+        :return: A 4D array of shape (W, L, num_rotations, buffer_size) with 0s and 1s.
+
+        - 0: The action is invalid.
+        - 1: The action is valid.
+        """
+        action_mask = np.zeros((self.W, self.L, self.num_rotations, self.buffer_size), dtype=np.int8)
+
+        for buffer_idx, item in enumerate(self.buffer):
+            if item == (0, 0, 0):
+                # All actions are valid
+                action_mask[:, :, :, buffer_idx] = 1
+
+            for rot in range(self.num_rotations):
+                rotated_box = self._get_rotated_item(item, rot)
+                rotated_w, rotated_l, rotated_h = rotated_box
+
+                # Iterate over all possible (x, y) positions
+                for x_pos in range(self.W - rotated_w + 1):
+                    for y_pos in range(self.L - rotated_l + 1):
+                        # Determine z based on height_map (placement on top)
+                        z = max([self.height_map[xi][yi] for xi in range(x_pos, x_pos + rotated_w) for yi in range(y_pos, y_pos + rotated_l)])
+
+                        # Check height constraint
+                        if z + rotated_h > self.H:
+                            continue
+
+                        # Check support ratio
+                        supported_cells = 0
+                        total_cells = rotated_w * rotated_l
+                        for xi in range(x_pos, x_pos + rotated_w):
+                            for yi in range(y_pos, y_pos + rotated_l):
+                                if self.height_map[xi][yi] >= z:
+                                    supported_cells += 1
+                        support_ratio = supported_cells / total_cells
+                        if support_ratio < 0.8:
+                            continue  # Insufficient support
+
+                        action_mask[x_pos, y_pos, rot, buffer_idx] = 1
+
+        return action_mask

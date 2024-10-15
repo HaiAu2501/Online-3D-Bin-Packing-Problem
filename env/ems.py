@@ -21,7 +21,7 @@ class EMSManager:
         """
         Find the EMS that contains the given box.
 
-        :param box: A tuple (x, y, z, w, l, h) representing the box's position and size.
+        :param box: A tuple (x, y, z, w, l, h) representing the box's position and rotated size.
         :return: The EMS tuple that contains the box, or None if not found.
         """
         for ems in self.ems_list:
