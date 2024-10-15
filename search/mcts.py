@@ -1,10 +1,15 @@
 # search/mcts.py
 
+from __future__ import annotations
+
 import math
 import copy
-from typing import Optional, Tuple
+from typing import Optional, Tuple, TYPE_CHECKING
 import torch
 import numpy as np
+
+if TYPE_CHECKING:
+    from env.env import BinPacking3DEnv
 
 from node import Node
 from models.policy_net import PolicyNetwork
@@ -13,7 +18,7 @@ from models.value_net import ValueNetwork
 class MCTS:
     def __init__(
         self,
-        env,
+        env: BinPacking3DEnv,
         policy_network: PolicyNetwork,
         value_network: ValueNetwork,
         num_simulations: int = 1000,
@@ -74,7 +79,7 @@ class MCTS:
         best_action = self._get_best_action()
         return best_action
 
-    def _simulate(self, state) -> Tuple[float, bool]:
+    def _simulate(self, state: BinPacking3DEnv) -> Tuple[float, bool]:
         """
         Thực hiện mô phỏng từ trạng thái hiện tại đến khi kết thúc.
 

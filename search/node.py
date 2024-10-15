@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Optional, Tuple, Any, TYPE_CHECKING
+from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 import copy
 import numpy as np
 
@@ -18,25 +18,26 @@ class Node:
         action: Optional[Tuple[int, int, int, int]] = None
     ):
         """
-        Khởi tạo một nút trong cây MCTS.
+        Initialize a node in the MCTS tree.
 
-        :param state: Trạng thái hiện tại của môi trường (sao chép của BinPacking3DEnv).
-        :param parent: Nút cha của nút hiện tại.
-        :param action: Hành động dẫn đến trạng thái này từ nút cha.
+        :param state: The current state of the environment (as a copy of an BinPacking3DEnv instance).
+        :param parent: Parent node that leads to this state.
+        :param action: Action taken to reach this state.
         """
         self.state = state
         self.parent = parent
-        self.children: Dict[Tuple[int, int, int, int], 'Node'] = {}
         self.action = action
+
+        self.children: Dict[Tuple[int, int, int, int], Node] = {}
         self.visits: int = 0
         self.value: float = 0.0
         self.untried_actions: List[Tuple[int, int, int, int]] = self.get_valid_actions()
 
     def get_valid_actions(self) -> List[Tuple[int, int, int, int]]:
         """
-        Lấy danh sách các hành động hợp lệ từ trạng thái hiện tại.
+        Get a list of valid actions that can be taken from the current state.
 
-        :return: Danh sách các hành động hợp lệ.
+        :return: A list of valid actions.
         """
         action_mask = self.state.generate_action_mask()
         W, L, num_rotations, buffer_size = self.state.W, self.state.L, self.state.num_rotations, self.state.buffer_size
@@ -51,18 +52,18 @@ class Node:
 
     def is_fully_expanded(self) -> bool:
         """
-        Kiểm tra xem nút đã được mở rộng đầy đủ chưa (tất cả hành động khả dụng đã được mở rộng).
+        Check if all actions have been tried from the current state.
 
-        :return: True nếu đầy đủ, ngược lại False.
+        :return: True if all actions have been tried, False otherwise.
         """
         return len(self.untried_actions) == 0
 
     def best_child(self, c_param: float = math.sqrt(2)) -> 'Node':
         """
-        Chọn nút con tốt nhất dựa trên công thức UCB1.
+        Select the best child node based on the UCB formula.
 
-        :param c_param: Hệ số cân bằng giữa khai thác và khám phá.
-        :return: Nút con tốt nhất.
+        :param c_param: Exploration and exploitation trade-off parameter.
+        :return: Best child node based on the UCB formula.
         """
         choices_weights = [
             (child.value / child.visits) + c_param * math.sqrt((2 * math.log(self.visits) / child.visits))
@@ -72,9 +73,9 @@ class Node:
 
     def expand(self) -> Node:
         """
-        Mở rộng nút bằng cách chọn một hành động chưa được thử và tạo nút con tương ứng.
+        Expand the current node by selecting an untried action.
 
-        :return: Nút con mới được mở rộng.
+        :return: The child node after taking the selected action.
         """
         action = self.untried_actions.pop()
         # Tạo bản sao của môi trường để thực hiện hành động
@@ -86,17 +87,17 @@ class Node:
 
     def update(self, reward: float):
         """
-        Cập nhật giá trị và số lượt thăm của nút.
+        Update the value and visit count of the node.
 
-        :param reward: Giá trị thu được từ việc mô phỏng.
+        :param reward: The reward received after taking the action.
         """
         self.visits += 1
         self.value += reward
 
     def fully_expanded_children(self) -> List['Node']:
         """
-        Trả về danh sách các nút con đã được mở rộng đầy đủ.
+        Get a list of fully expanded child nodes.
 
-        :return: Danh sách các nút con.
+        :return: A list of fully expanded child nodes.
         """
         return [child for child in self.children.values() if child.is_fully_expanded()]

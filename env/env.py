@@ -68,12 +68,12 @@ class BinPacking3DEnv(gym.Env):
         """
         self.max_ems = self.W * self.L * self.H
         self.observation_space = spaces.Dict({
-            'height_map': spaces.Box(
-                low=0,
-                high=self.H,
-                shape=(self.W, self.L),
-                dtype=np.int32
-            ),
+            # 'height_map': spaces.Box(
+            #     low=0,
+            #     high=self.H,
+            #     shape=(self.W, self.L),
+            #     dtype=np.int32
+            # ),
             'buffer': spaces.Box(
                 low=0,
                 high=max(self.W, self.L, self.H),
@@ -177,7 +177,7 @@ class BinPacking3DEnv(gym.Env):
         Create an observation from the current state.
         """
         return {
-            'height_map': self.height_map,
+            # 'height_map': self.height_map,
             'buffer': np.array(self.buffer, dtype=np.int32),
             'ems': np.array(self.ems_manager.ems_list, dtype=np.int32)
         }
