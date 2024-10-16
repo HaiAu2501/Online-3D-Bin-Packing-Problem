@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import math
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
-import copy
 import numpy as np
 
 if TYPE_CHECKING:
@@ -20,28 +19,35 @@ class Node:
         """
         Initialize a node in the MCTS tree.
 
-        :param state: The current state of the environment (as a copy of an BinPacking3DEnv instance).
+        :param state: The current state of the environment.
         :param parent: Parent node that leads to this state.
         :param action: Action taken to reach this state.
         """
-        self.state = state
+        self.state = state.clone()  # Use the clone method instead of deepcopy
         self.parent = parent
         self.action = action
 
-        self.children: Dict[Tuple[int, int, int, int], Node] = {} # Dict of actions to child nodes
-        self.visits: int = 0 # Number of visits to the node
-        self.value: float = 0.0 # Total value of the node
-        self.untried_actions: List[Tuple[int, int, int, int]] = self.get_valid_actions() # List of untried actions
+        self.children: Dict[Tuple[int, int, int, int], Node] = {}  # Mapping from actions to child nodes
+        self.visits: int = 0  # Number of times node has been visited
+        self.value: float = 0.0  # Accumulated value of the node
+        self.is_terminal: bool = False  # Flag to indicate if the node is terminal
+
+        self.untried_actions: List[Tuple[int, int, int, int]] = self.get_valid_actions() if not self.is_terminal else []  # Actions not yet tried
 
     def get_valid_actions(self) -> List[Tuple[int, int, int, int]]:
         """
-        Get a list of valid actions that can be taken from the current state.
+        Retrieve a list of valid actions from the current state.
 
-        :return: A list of valid actions.
+        :return: A list of valid actions represented as tuples.
         """
+        if self.is_terminal:
+            return []
+
         action_mask = self.state.generate_action_mask()
         W, L, num_rotations, buffer_size = self.state.W, self.state.L, self.state.num_rotations, self.state.buffer_size
         valid_actions = []
+
+        # Iterate through the action mask to collect valid actions
         for x in range(W):
             for y in range(L):
                 for rot in range(num_rotations):
@@ -52,52 +58,65 @@ class Node:
 
     def is_fully_expanded(self) -> bool:
         """
-        Check if all actions have been tried from the current state.
+        Check if all possible actions have been tried from this node.
 
-        :return: True if all actions have been tried, False otherwise.
+        :return: True if fully expanded, False otherwise.
         """
         return len(self.untried_actions) == 0
 
-    def best_child(self, c_param: float = math.sqrt(2)) -> Node:
+    def best_child(self, c_param: float = math.sqrt(2)) -> Optional[Node]:
         """
-        Select the best child node based on the UCB formula.
+        Select the best child node based on the UCB1 formula.
 
-        :param c_param: Exploration and exploitation trade-off parameter.
-        :return: Best child node based on the UCB formula.
+        :param c_param: Exploration parameter.
+        :return: The child node with the highest UCB1 value.
         """
         choices_weights = [
             (child.value / child.visits) + c_param * math.sqrt((2 * math.log(self.visits) / child.visits))
             for child in self.children.values()
         ]
-        return list(self.children.values())[choices_weights.index(max(choices_weights))]
+        # Return the child with the maximum UCB1 value
+        if choices_weights:
+            return list(self.children.values())[np.argmax(choices_weights)]
+        else:
+            return None
 
-    def expand(self) -> Node:
+    def expand(self) -> Optional[Node]:
         """
-        Expand the current node by selecting an untried action.
+        Expand the node by adding a new child for an untried action.
 
-        :return: The child node after taking the selected action.
+        :return: The newly created child node or None if no actions to try.
         """
+        if self.is_terminal:
+            return None
+
+        if not self.untried_actions:
+            return None
+
+        # Select an action to try
         action = self.untried_actions.pop()
-        # Tạo bản sao của môi trường để thực hiện hành động
-        next_state = copy.deepcopy(self.state)
-        _, _, done, _, _ = next_state.step(action)
-        child_node = Node(state=next_state, parent=self, action=action)
+        # Apply the action to the current state to get the next state
+        _, _, done, truncated, _ = self.state.step(action)
+
+        # Create a new child node with the resulting state
+        child_node = Node(state=self.state, parent=self, action=action)
+        child_node.is_terminal = done or truncated  # Mark as terminal if done or truncated
         self.children[action] = child_node
         return child_node
 
     def update(self, reward: float):
         """
-        Update the value and visit count of the node.
+        Update the node's statistics based on the received reward.
 
-        :param reward: The reward received after taking the action.
+        :param reward: The reward obtained from the simulation.
         """
         self.visits += 1
-        self.value += reward
+        self.value += reward  # Accumulate the reward
 
     def fully_expanded_children(self) -> List['Node']:
         """
-        Get a list of fully expanded child nodes.
+        Retrieve a list of fully expanded child nodes.
 
-        :return: A list of fully expanded child nodes.
+        :return: A list of child nodes that are fully expanded.
         """
         return [child for child in self.children.values() if child.is_fully_expanded()]

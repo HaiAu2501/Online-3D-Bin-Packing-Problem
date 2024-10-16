@@ -7,7 +7,6 @@ from typing import Tuple, List, Dict, Optional
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import seaborn as sns
-import random
 
 from ems import EMSManager
 
@@ -73,12 +72,6 @@ class BinPacking3DEnv(gym.Env):
         """
         self.max_ems = self.W * self.L * self.H
         self.observation_space = spaces.Dict({
-            # 'height_map': spaces.Box(
-            #     low=0,
-            #     high=self.H,
-            #     shape=(self.W, self.L),
-            #     dtype=np.int32
-            # ),
             'buffer': spaces.Box(
                 low=0,
                 high=max(self.W, self.L, self.H),
@@ -127,6 +120,7 @@ class BinPacking3DEnv(gym.Env):
         - info: Additional information.
 
         - Action is always valid because of the action mask we use in the training loop.
+        - Action can be None (when the action mask is all zeros).
         """
         done = False
         truncated = False
@@ -187,7 +181,6 @@ class BinPacking3DEnv(gym.Env):
         Create an observation from the current state.
         """
         return {
-            # 'height_map': self.height_map,
             'buffer': np.array(self.buffer, dtype=np.int32),
             'ems': np.array(self.ems_manager.ems_list, dtype=np.int32)
         }
@@ -364,3 +357,21 @@ class BinPacking3DEnv(gym.Env):
         Close the environment.
         """
         pass
+
+    def clone(self) -> 'BinPacking3DEnv':
+        """
+        Clone the environment.
+        """
+        cloned_env = BinPacking3DEnv(
+            bin_size=(self.W, self.L, self.H),
+            items=self.items.copy(),
+            buffer_size=self.buffer_size,
+            num_rotations=self.num_rotations
+        )
+        cloned_env.current_item_index = self.current_item_index
+        cloned_env.height_map = self.height_map.copy()
+        cloned_env.placed_items = self.placed_items.copy()
+        cloned_env.buffer = self.buffer.copy()
+        cloned_env.ems_manager = self.ems_manager.clone()
+
+        return cloned_env

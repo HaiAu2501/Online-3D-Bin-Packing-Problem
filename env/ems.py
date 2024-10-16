@@ -270,3 +270,14 @@ class EMSManager:
         for idx, ems in enumerate(self.ems_list):
             print(f"EMS {idx + 1}: (x_min={ems[0]}, y_min={ems[1]}, z_min={ems[2]}, "
                   f"x_max={ems[3]}, y_max={ems[4]}, z_max={ems[5]})")
+
+    def clone(self):
+        """
+        Create a deep copy of the EMSManager object.
+
+        :return: A deep copy of the EMSManager object.
+        """
+        cloned_manager = EMSManager(bin_size=(self.W, self.L, self.H))
+        cloned_manager.ems_list = self.ems_list.copy()
+
+        return cloned_manager
