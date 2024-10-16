@@ -3,7 +3,12 @@
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Optional
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import seaborn as sns
+import random
+
 from ems import EMSManager
 
 class BinPacking3DEnv(gym.Env):
@@ -108,11 +113,11 @@ class BinPacking3DEnv(gym.Env):
             else:
                 self.buffer.append((0, 0, 0))
     
-    def step(self, action: Tuple[int, int, int, int]) -> Tuple[Dict, float, bool, bool, Dict]:
+    def step(self, action: Optional[Tuple[int, int, int, int]]) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict]:
         """
         Perform a step in the environment.
 
-        :param action: The tuple of (x, y, rotation, item_index).
+        :param action: The tuple of (x, y, rotation, item_index) or None.
         :return: A tuple of (observation, reward, done, truncated, info).
 
         - observation: The current observation.
@@ -127,6 +132,11 @@ class BinPacking3DEnv(gym.Env):
         truncated = False
         info = {}
         reward = 0.0
+
+        if action is None:
+            done = True
+            info['terminated'] = True
+            return self._get_observation(), reward, done, truncated, info
 
         # Unpack the action
         x, y, rotation, item_index = action 
@@ -261,6 +271,93 @@ class BinPacking3DEnv(gym.Env):
         print("\nBuffer:")
         for item in self.buffer:
             print(item)
+
+    def visualize(self):
+        if not self.placed_items:
+            print("No items have been placed yet.")
+            return
+        
+        fig = plt.figure(figsize=(10, 8))
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Vẽ khung thùng hàng
+        W, L, H = self.W, self.L, self.H
+        bin_corners = [
+            [0, 0, 0],
+            [W, 0, 0],
+            [W, L, 0],
+            [0, L, 0],
+            [0, 0, H],
+            [W, 0, H],
+            [W, L, H],
+            [0, L, H],
+        ]
+
+        bin_faces = [
+            [bin_corners[0], bin_corners[1], bin_corners[2], bin_corners[3]],
+            [bin_corners[4], bin_corners[5], bin_corners[6], bin_corners[7]],
+            [bin_corners[0], bin_corners[1], bin_corners[5], bin_corners[4]],
+            [bin_corners[2], bin_corners[3], bin_corners[7], bin_corners[6]],
+            [bin_corners[1], bin_corners[2], bin_corners[6], bin_corners[5]],
+            [bin_corners[4], bin_corners[7], bin_corners[3], bin_corners[0]],
+        ]
+
+        bin_collection = Poly3DCollection(bin_faces, linewidths=1, edgecolors='black', alpha=0.1)
+        bin_collection.set_facecolor((0.5, 0.5, 0.5, 0.1))  # Màu xám nhạt cho thùng
+        ax.add_collection3d(bin_collection)
+
+        # Tạo danh sách màu sắc khác nhau
+        num_items = len(self.placed_items)
+        palette = sns.color_palette("Set2", num_items)
+
+        for idx, item in enumerate(self.placed_items):
+            x, y, z = item['position']
+            w, l, h = item['size']
+
+            # Định nghĩa các góc của hộp
+            item_corners = [
+                [x, y, z],
+                [x + w, y, z],
+                [x + w, y + l, z],
+                [x, y + l, z],
+                [x, y, z + h],
+                [x + w, y, z + h],
+                [x + w, y + l, z + h],
+                [x, y + l, z + h],
+            ]
+
+            # Định nghĩa các mặt của hộp
+            item_faces = [
+                [item_corners[0], item_corners[1], item_corners[2], item_corners[3]],
+                [item_corners[4], item_corners[5], item_corners[6], item_corners[7]],
+                [item_corners[0], item_corners[1], item_corners[5], item_corners[4]],
+                [item_corners[2], item_corners[3], item_corners[7], item_corners[6]],
+                [item_corners[1], item_corners[2], item_corners[6], item_corners[5]],
+                [item_corners[4], item_corners[7], item_corners[3], item_corners[0]],
+            ]
+
+            # Tạo Poly3DCollection cho mỗi mục
+            item_color = palette[idx % len(palette)]
+            item_collection = Poly3DCollection(item_faces, linewidths=1, edgecolors='black', alpha=0.5)
+            item_collection.set_facecolor(item_color)
+            ax.add_collection3d(item_collection)
+
+        # Thiết lập tỷ lệ trục bằng nhau
+        max_range = np.array([W, L, H]).max()
+        ax.set_xlim(0, max_range)
+        ax.set_ylim(0, max_range)
+        ax.set_zlim(0, max_range)
+
+        # Thiết lập nhãn trục
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+
+        # Thiết lập góc nhìn (tuỳ chọn)
+        ax.view_init(elev=20., azim=30)
+
+        plt.title('3D Bin Packing Visualization')
+        plt.show()
 
     def close(self):
         """

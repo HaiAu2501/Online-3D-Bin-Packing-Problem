@@ -28,10 +28,10 @@ class Node:
         self.parent = parent
         self.action = action
 
-        self.children: Dict[Tuple[int, int, int, int], Node] = {}
-        self.visits: int = 0
-        self.value: float = 0.0
-        self.untried_actions: List[Tuple[int, int, int, int]] = self.get_valid_actions()
+        self.children: Dict[Tuple[int, int, int, int], Node] = {} # Dict of actions to child nodes
+        self.visits: int = 0 # Number of visits to the node
+        self.value: float = 0.0 # Total value of the node
+        self.untried_actions: List[Tuple[int, int, int, int]] = self.get_valid_actions() # List of untried actions
 
     def get_valid_actions(self) -> List[Tuple[int, int, int, int]]:
         """
@@ -58,7 +58,7 @@ class Node:
         """
         return len(self.untried_actions) == 0
 
-    def best_child(self, c_param: float = math.sqrt(2)) -> 'Node':
+    def best_child(self, c_param: float = math.sqrt(2)) -> Node:
         """
         Select the best child node based on the UCB formula.
 

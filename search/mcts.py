@@ -25,13 +25,13 @@ class MCTS:
         c_param: float = math.sqrt(2)
     ):
         """
-        Khởi tạo thuật toán MCTS.
+        Initialize the MCTS search.
 
-        :param env: Môi trường Gym tương ứng.
-        :param policy_network: Mạng Policy.
-        :param value_network: Mạng Value.
-        :param num_simulations: Số lần mô phỏng trong mỗi lượt tìm kiếm.
-        :param c_param: Hệ số cân bằng giữa khai thác và khám phá trong UCB.
+        :param env: The environment to search in.
+        :param policy_network: The Policy Network.
+        :param value_network: The Value Network.
+        :param num_simulations: The number of simulations to run.
+        :param c_param: The exploration and exploitation trade-off parameter.
         """
         self.env = env
         self.policy_network = policy_network
@@ -42,16 +42,15 @@ class MCTS:
 
     def _get_env_state(self):
         """
-        Lấy trạng thái hiện tại của môi trường.
+        Get a copy of the current environment.
 
-        :return: Một bản sao của môi trường hiện tại.
+        :return: A copy of the current environment.
         """
-        # Giả sử môi trường hỗ trợ copy.deepcopy
         return copy.deepcopy(self.env)
 
     def search(self):
         """
-        Thực hiện tìm kiếm MCTS để chọn hành động tốt nhất từ trạng thái gốc.
+        Run the MCTS search.
         """
         for _ in range(self.num_simulations):
             node = self.root
@@ -81,10 +80,10 @@ class MCTS:
 
     def _simulate(self, state: BinPacking3DEnv) -> Tuple[float, bool]:
         """
-        Thực hiện mô phỏng từ trạng thái hiện tại đến khi kết thúc.
+        Perform a simulation from the given state until the end.
 
-        :param state: Trạng thái môi trường tại thời điểm bắt đầu mô phỏng.
-        :return: Tổng phần thưởng và trạng thái kết thúc.
+        :param state: The current state of the environment as the starting point.
+        :return: The total reward obtained from the simulation and whether the simulation is done.
         """
         done = False
         total_reward = 0.0
@@ -124,10 +123,10 @@ class MCTS:
 
     def _backpropagate(self, node: Node, reward: float):
         """
-        Cập nhật giá trị và số lượt thăm cho các nút trên đường đi từ nút hiện tại đến gốc.
+        Update value and visit count of the nodes along the path from the given node to the root.
 
-        :param node: Nút bắt đầu từ nút được mở rộng.
-        :param reward: Giá trị thu được từ mô phỏng.
+        :param node: The node to start backpropagation.
+        :param reward: The reward received after the simulation.
         """
         while node is not None:
             node.visits += 1

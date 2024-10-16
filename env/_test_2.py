@@ -48,4 +48,6 @@ if __name__ == "__main__":
     env.render()
     print(f"Reward: {reward}, Done: {done}, Info: {info}")
 
+    env.visualize()
+
     env.close()
