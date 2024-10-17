@@ -32,8 +32,8 @@ def main():
         d_model=128, 
         nhead=8, 
         num_layers=3, 
-        dim_feedforward=512, 
-        max_ems=env.W * env.L * env.H
+        dim_feedforward=256, 
+        max_ems=env.W * env.L
     )
     
     policy_net = PolicyNetwork(
@@ -51,7 +51,7 @@ def main():
     )
 
     # Khởi tạo Prioritized Replay Buffer
-    prb = PrioritizedReplayBuffer(capacity=100000, alpha=0.6)
+    prb = PrioritizedReplayBuffer(capacity=1000, alpha=0.6)
 
     # Khởi tạo Trainer
     trainer = Trainer(
@@ -60,18 +60,19 @@ def main():
         policy_network=policy_net,
         value_network=value_net,
         replay_buffer=prb,
-        num_simulations=1000,
+        num_simulations=10,
         batch_size=64,
         gamma=0.99,
         lr_policy=1e-4,
         lr_value=1e-3,
         beta_start=0.4,
         beta_frames=100000,
-        save_path="./models/"
+        save_path="./models/",
+        verbose=True
     )
 
     # Bắt đầu quá trình huấn luyện
-    trainer.train(num_episodes=10000, update_every=10)
+    trainer.train(num_episodes=100, update_every=2)
 
 if __name__ == "__main__":
     main()

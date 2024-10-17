@@ -161,19 +161,18 @@ class Trainer:
         dones = batch[4]
 
         # Process states and next_states for Policy and Value networks
-        # Assuming the networks take concatenated buffer and ems as input
         state_inputs = [self._prepare_input(state) for state in states]
         next_state_inputs = [self._prepare_input(state) for state in next_states]
 
         # Stack tensors
-        buffer_states = torch.cat([s['buffer'] for s in state_inputs], dim=0).to(self.transformer.device)  # [batch_size, num_items, 3]
-        ems_states = torch.cat([s['ems'] for s in state_inputs], dim=0).to(self.transformer.device)      # [batch_size, num_ems, 6]
-        ems_masks = torch.cat([s['ems_mask'] for s in state_inputs], dim=0).to(self.transformer.device)  # [batch_size, max_ems]
+        buffer_states = torch.cat([s['buffer'] for s in state_inputs], dim=0).to(self.transformer.device)      # [batch_size, buffer_size, 3]
+        ems_states = torch.cat([s['ems'] for s in state_inputs], dim=0).to(self.transformer.device)            # [batch_size, max_ems, 6]
+        ems_masks = torch.cat([s['ems_mask'] for s in state_inputs], dim=0).to(self.transformer.device)        # [batch_size, max_ems]
         action_masks = torch.cat([s['action_mask'] for s in state_inputs], dim=0).to(self.transformer.device)  # [batch_size, action_dim]
 
-        buffer_next_states = torch.cat([s['buffer'] for s in next_state_inputs], dim=0).to(self.transformer.device)  # [batch_size, num_items, 3]
-        ems_next_states = torch.cat([s['ems'] for s in next_state_inputs], dim=0).to(self.transformer.device)      # [batch_size, num_ems, 6]
-        ems_next_masks = torch.cat([s['ems_mask'] for s in next_state_inputs], dim=0).to(self.transformer.device)  # [batch_size, max_ems]
+        buffer_next_states = torch.cat([s['buffer'] for s in next_state_inputs], dim=0).to(self.transformer.device)  # [batch_size, buffer_size, 3]
+        ems_next_states = torch.cat([s['ems'] for s in next_state_inputs], dim=0).to(self.transformer.device)        # [batch_size, max_ems, 6]
+        ems_next_masks = torch.cat([s['ems_mask'] for s in next_state_inputs], dim=0).to(self.transformer.device)    # [batch_size, max_ems]
         # Assuming you have action_masks for next_states if needed
 
         actions = torch.tensor(actions, dtype=torch.long).to(self.transformer.device)         # [batch_size]
@@ -243,15 +242,16 @@ class Trainer:
         :param observation: The observation dictionary containing 'buffer' and 'ems'.
         :return: A dictionary with prepared tensors.
         """
-        buffer = torch.tensor(observation['buffer'], dtype=torch.float32).unsqueeze(0)  # [1, num_items, 3]
-        ems = torch.tensor(observation['ems'], dtype=torch.float32).unsqueeze(0)        # [1, num_ems, 6]
-        num_ems = observation['ems'].shape[0]
-        ems_mask = torch.zeros(1, self.transformer.max_ems).bool().to(self.device)
-        ems_mask[:, :num_ems] = True  # True for real EMS, False for padding
+        buffer = torch.tensor(observation['buffer'], dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, buffer_size, 3]
+        ems = torch.tensor(observation['ems'], dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, max_ems, 6]
+        ems_mask = torch.zeros(1, self.transformer.max_ems).bool().to(ems.device)
+        
+        # Giả sử các EMS giả được đánh dấu False trong mask
+        ems_mask[:, :self._count_real_ems(observation['ems'])] = True  # True cho các EMS thực, False cho padding
 
         # Generate action_mask from state
         action_mask_np = self.env.generate_action_mask()
-        action_mask = torch.tensor(action_mask_np, dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, action_dim]
+        action_mask = torch.tensor(action_mask_np, dtype=torch.float32).view(1, -1).to(self.transformer.device)  # [1, action_dim]
 
         return {
             'buffer': buffer,
@@ -259,6 +259,16 @@ class Trainer:
             'ems_mask': ems_mask,
             'action_mask': action_mask
         }
+
+    def _count_real_ems(self, ems_array: np.ndarray) -> int:
+        """
+        Đếm số lượng EMS thực trong mảng EMS.
+
+        :param ems_array: Mảng EMS hiện tại.
+        :return: Số lượng EMS thực.
+        """
+        # Giả sử các EMS giả là toàn bộ 0
+        return np.sum(np.any(ems_array != 0, axis=1))
 
     def _save_models(self, episode: int):
         """

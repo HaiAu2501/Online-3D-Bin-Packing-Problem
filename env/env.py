@@ -17,7 +17,8 @@ class BinPacking3DEnv(gym.Env):
         bin_size: Tuple[int, int, int],
         items: List[Tuple[int, int, int]],
         buffer_size: int = 2,
-        num_rotations: int = 2
+        num_rotations: int = 2,
+        max_ems: int = 100,
     ):
         super(BinPacking3DEnv, self).__init__()
         """
@@ -32,6 +33,7 @@ class BinPacking3DEnv(gym.Env):
         self.items: List[Tuple[int, int, int]] = items
         self.buffer_size: int = buffer_size
         self.num_rotations = num_rotations
+        self.max_ems = max_ems
 
         if self.buffer_size > len(self.items):
             raise ValueError("Buffer size must be less than the number of items.")
@@ -192,11 +194,20 @@ class BinPacking3DEnv(gym.Env):
         """
         Create an observation from the current state.
         """
+        ems_array = np.array(self.ems_manager.ems_list, dtype=np.int32)
+        current_num_ems = ems_array.shape[0]
+        
+        if current_num_ems < self.max_ems:
+            padding = np.zeros((self.max_ems - current_num_ems, 6), dtype=np.int32)
+            ems_array = np.concatenate([ems_array, padding], axis=0)
+        else:
+            ems_array = ems_array[:self.max_ems]
+        
         return {
             'buffer': np.array(self.buffer, dtype=np.int32),
-            'ems': np.array(self.ems_manager.ems_list, dtype=np.int32)
+            'ems': ems_array
         }
-    
+        
     def _get_rotated_item(self, item: Tuple[int, int, int], rotation: int) -> Tuple[int, int, int]:
         """
         Rotate the item based on the given rotation.

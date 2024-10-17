@@ -87,86 +87,91 @@ class MCTS:
         done = False
         total_reward = 0.0
 
-        while not done:
-            observation = state._get_observation()
-            action_mask = state.generate_action_mask()
+        self.transformer.eval()
+        self.policy_network.eval()
+        self.value_network.eval()
 
-            # Prepare input for the transformer
-            ems_tensor = torch.tensor(observation['ems'], dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, num_ems, 6]
-            buffer_tensor = torch.tensor(observation['buffer'], dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, num_items, 3]
+        with torch.no_grad():  # Bắt đầu không tính gradient
+            while not done:
+                observation = state._get_observation()
+                action_mask = state.action_mask
 
-            # Create masks
-            num_ems = observation['ems'].shape[0]
-            ems_mask = torch.zeros(1, self.transformer.max_ems).bool().to(ems_tensor.device)
-            ems_mask[:, :num_ems] = True  # True cho các phần thực, False cho padding
+                # Prepare input for the transformer
+                ems_tensor = torch.tensor(observation['ems'], dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, num_ems, 6]
+                buffer_tensor = torch.tensor(observation['buffer'], dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, num_items, 3]
 
-            # Convert action_mask from numpy to torch tensor, flatten it, and move to device
-            action_mask_tensor = torch.tensor(action_mask, dtype=torch.float32).view(1, -1).to(ems_tensor.device)  # [1, action_dim]
+                # Create masks
+                num_ems = observation['ems'].shape[0]
+                ems_mask = torch.zeros(1, self.transformer.max_ems).bool().to(ems_tensor.device)
+                ems_mask[:, :num_ems] = True  # True cho các phần thực, False cho padding
 
-            # Pass through transformer to get features
-            ems_features, item_features = self.transformer(
-                ems_tensor,
-                buffer_tensor,
-                ems_mask=ems_mask,
-                buffer_mask=None  # You can create buffer_mask if needed
-            )
+                # Convert action_mask from numpy to torch tensor, flatten it, and move to device
+                action_mask_tensor = torch.tensor(action_mask, dtype=torch.float32).view(1, -1).to(ems_tensor.device)  # [1, action_dim]
 
-            # Pass through Policy Network
-            action_probs = self.policy_network(ems_features, item_features, action_mask_tensor)  # [1, action_dim]
+                # Pass through transformer to get features
+                ems_features, item_features = self.transformer(
+                    ems_tensor,
+                    buffer_tensor,
+                    ems_mask=ems_mask,
+                    buffer_mask=None  # You can create buffer_mask if needed
+                )
 
-            # Kiểm tra tổng xác suất
-            sum_probs = action_probs.sum(dim=1, keepdim=True)  # [1, 1]
-            if sum_probs.item() <= 0:
-                # Không có hành động hợp lệ, kết thúc simulation
-                _, _, done, truncated, _ = state.step(None)
+                # Pass through Policy Network
+                action_probs = self.policy_network(ems_features, item_features, action_mask_tensor)  # [1, action_dim]
+
+                # Kiểm tra tổng xác suất
+                sum_probs = action_probs.sum(dim=1, keepdim=True)  # [1, 1]
+                if sum_probs.item() <= 0:
+                    # Không có hành động hợp lệ, kết thúc simulation
+                    _, _, done, truncated, _ = state.step(None)
+                    if truncated:
+                        done = True
+                    continue
+
+                # Sample an action based on probabilities
+                action = torch.multinomial(action_probs, num_samples=1).item()
+
+                # Decode action index to (x, y, rotation, item_index)
+                W, L, num_rotations, buffer_size = state.W, state.L, state.num_rotations, state.buffer_size
+                total_rot_buffer = num_rotations * buffer_size
+
+                x = action // (L * total_rot_buffer)
+                y = (action % (L * total_rot_buffer)) // total_rot_buffer
+                rotation = (action % total_rot_buffer) // buffer_size
+                item_index = action % buffer_size
+
+                selected_action = (x, y, rotation, item_index)
+
+                # Apply the action to the state
+                _, reward, done, truncated, _ = state.step(selected_action)
+                total_reward += reward
+
                 if truncated:
                     done = True
-                continue
 
-            # Sample an action based on probabilities
-            action = torch.multinomial(action_probs, num_samples=1).item()
+            # Use the value network to estimate the value of the final state
+            final_observation = state._get_observation()
+            final_ems_tensor = torch.tensor(final_observation['ems'], dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, num_ems,6]
+            final_buffer_tensor = torch.tensor(final_observation['buffer'], dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, num_items,3]
 
-            # Decode action index to (x, y, rotation, item_index)
-            W, L, num_rotations, buffer_size = state.W, state.L, state.num_rotations, state.buffer_size
-            total_rot_buffer = num_rotations * buffer_size
+            # Create masks for final state
+            final_num_ems = final_observation['ems'].shape[0]
+            final_ems_mask = torch.zeros(1, self.transformer.max_ems).bool().to(final_ems_tensor.device)
+            final_ems_mask[:, :final_num_ems] = True
 
-            x = action // (L * total_rot_buffer)
-            y = (action % (L * total_rot_buffer)) // total_rot_buffer
-            rotation = (action % total_rot_buffer) // buffer_size
-            item_index = action % buffer_size
+            # Get features from transformer
+            final_ems_features, final_item_features = self.transformer(
+                final_ems_tensor,
+                final_buffer_tensor,
+                ems_mask=final_ems_mask,
+                buffer_mask=None
+            )
 
-            selected_action = (x, y, rotation, item_index)
+            # Get value from Value Network
+            value = self.value_network(final_ems_features, final_item_features).squeeze(1).item()
+            value = torch.tanh(torch.tensor(value)).item()  # Normalize the value
 
-            # Apply the action to the state
-            _, reward, done, truncated, _ = state.step(selected_action)
-            total_reward += reward
-
-            if truncated:
-                done = True
-
-        # Use the value network to estimate the value of the final state
-        final_observation = state._get_observation()
-        final_ems_tensor = torch.tensor(final_observation['ems'], dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, num_ems,6]
-        final_buffer_tensor = torch.tensor(final_observation['buffer'], dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, num_items,3]
-
-        # Create masks for final state
-        final_num_ems = final_observation['ems'].shape[0]
-        final_ems_mask = torch.zeros(1, self.transformer.max_ems).bool().to(final_ems_tensor.device)
-        final_ems_mask[:, :final_num_ems] = True
-
-        # Get features from transformer
-        final_ems_features, final_item_features = self.transformer(
-            final_ems_tensor,
-            final_buffer_tensor,
-            ems_mask=final_ems_mask,
-            buffer_mask=None
-        )
-
-        # Get value from Value Network
-        value = self.value_network(final_ems_features, final_item_features).squeeze(1).item()
-        value = torch.tanh(torch.tensor(value)).item()  # Normalize the value
-
-        total_reward += value  # Combine simulation reward with value network's estimate
+            total_reward += value  # Combine simulation reward with value network's estimate
 
         return total_reward, done
 

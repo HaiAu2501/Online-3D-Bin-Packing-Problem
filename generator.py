@@ -94,7 +94,7 @@ def main():
     random.seed(42)  # Đặt seed để kết quả lặp lại được (tùy chọn)
     
     container_size = (10, 10, 10)  # Kích thước hộp lớn (x, y, z)
-    min_box_size = 2  # Kích thước tối thiểu của hộp nhỏ (số nguyên)
+    min_box_size = 3  # Kích thước tối thiểu của hộp nhỏ (số nguyên)
     initial_box = Box(0, 0, 0, *container_size)
     
     # Chia hộp lớn thành các hộp nhỏ

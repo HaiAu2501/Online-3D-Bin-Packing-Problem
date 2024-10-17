@@ -15,7 +15,7 @@ class BinPackingTransformer(nn.Module):
         nhead: int = 8, 
         num_layers: int = 3, 
         dim_feedforward: int = 512, 
-        max_ems: int = 1000 # Should be W * L * H
+        max_ems: int = 100 # Should be W * L * H
     ):
         """
         Kiến trúc Transformer cho bài toán Bin Packing với hai đầu vào: EMS và Buffer Items.
