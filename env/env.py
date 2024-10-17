@@ -149,10 +149,6 @@ class BinPacking3DEnv(gym.Env):
         rotated_item = self._get_rotated_item(selected_item, rotation)
         rotated_w, rotated_l, rotated_h = rotated_item
 
-        # DEBUG: Print the details of the action and the selected item
-        # print(f'Action: x={x}, y={y}, rotation={rotation}, item_index={item_index}')
-        # print(f'Selected item: {selected_item} -> {rotated_item}')
-
         # Determine z-coordinate based on the height map (place the item on top of the existing items)
         z = max([self.height_map[xi][yi] for xi in range(x, x + rotated_w) for yi in range(y, y + rotated_l)])
 

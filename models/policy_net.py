@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from typing import Tuple
-import logging
 
 class PolicyNetwork(nn.Module):
     def __init__(
@@ -22,26 +21,29 @@ class PolicyNetwork(nn.Module):
             action_dim (int): The size of the output action space (number of available actions).
         """
         super(PolicyNetwork, self).__init__()
- 
+
         self.hidden_dim = hidden_dim
         if 'W' not in kwargs or 'L' not in kwargs or 'num_rotations' not in kwargs or 'buffer_size' not in kwargs:
             raise ValueError("Please provide (W, L, num_rotations, buffer_size) or action_dim.")
         self.output_dim = kwargs.get('action_dim',  kwargs['W'] * kwargs['L'] * kwargs['num_rotations'] * kwargs['buffer_size'])
-        
+
         self.ems_mlp = nn.Sequential(
             nn.Linear(d_model, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim)
         )
-        
+
         self.item_mlp = nn.Sequential(
             nn.Linear(d_model, hidden_dim),
             nn.ReLU(),
             nn.Linear(hidden_dim, hidden_dim)
         )
-        
+
+        # Định nghĩa lớp Linear ở đây
+        self.output_linear = nn.Linear(hidden_dim, self.output_dim)
+
         self.softmax = nn.Softmax(dim=1)
-        
+
     def forward(
         self, 
         ems_features: Tensor, 
@@ -59,13 +61,18 @@ class PolicyNetwork(nn.Module):
         Returns:
             Tensor: [batch_size, action_dim] - Phân phối xác suất cho các hành động
         """
-        
         ems_out = self.ems_mlp(ems_features)  # [batch_size, hidden_dim]
         item_out = self.item_mlp(item_features)  # [batch_size, hidden_dim]
         combined = ems_out * item_out  # [batch_size, hidden_dim]
-        combined = nn.Linear(self.hidden_dim, self.output_dim).to(combined.device)(combined)  # [batch_size, action_dim]
+        combined = self.output_linear(combined)  # [batch_size, action_dim]
         probabilities = self.softmax(combined)  # [batch_size, action_dim]
-        masked_probabilities = probabilities * action_mask  # [batch_size, action_dim]    
+        
+        # Đảm bảo rằng action_mask cũng trên cùng thiết bị
+        action_mask = action_mask.to(probabilities.device)
+        
+        masked_probabilities = probabilities * action_mask  # [batch_size, action_dim]
+        
+        # Tránh chia cho 0 bằng cách thêm một epsilon nhỏ
         masked_probabilities = masked_probabilities / (masked_probabilities.sum(dim=1, keepdim=True) + 1e-8)
 
         return masked_probabilities

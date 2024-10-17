@@ -4,21 +4,21 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import numpy as np
-from typing import Dict, Tuple
-
-from typing import Tuple, List, Optional
+from typing import Tuple, List, Optional, Dict
 from env.env import BinPacking3DEnv
-from search.mcts import MCTS
 from search.replay_buffer import PrioritizedReplayBuffer
 from search.node import Node
+from search.mcts import MCTS
 from models.policy_net import PolicyNetwork
 from models.value_net import ValueNetwork
+from models.transformer import BinPackingTransformer  # Import transformer
 import os
 
 class Trainer:
     def __init__(
         self,
         env: BinPacking3DEnv,
+        transformer: BinPackingTransformer,
         policy_network: PolicyNetwork,
         value_network: ValueNetwork,
         replay_buffer: PrioritizedReplayBuffer,
@@ -29,12 +29,14 @@ class Trainer:
         lr_value: float = 1e-3,
         beta_start: float = 0.4,
         beta_frames: int = 100000,
-        save_path: str = "./models/"
+        save_path: str = "./models/",
+        verbose: bool = False
     ):
         """
         Initialize the Trainer.
 
         :param env: The bin packing environment.
+        :param transformer: The Transformer model for feature extraction.
         :param policy_network: The Policy Network.
         :param value_network: The Value Network.
         :param replay_buffer: The Prioritized Replay Buffer.
@@ -48,8 +50,14 @@ class Trainer:
         :param save_path: Directory to save the trained models.
         """
         self.env = env
-        self.policy_network = policy_network
-        self.value_network = value_network
+
+        # Xác định thiết bị: GPU nếu có, ngược lại CPU
+        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+        # Đưa Transformer và các mạng sang thiết bị đúng
+        self.transformer = transformer.to(self.device)
+        self.policy_network = policy_network.to(self.device)
+        self.value_network = value_network.to(self.device)
         self.replay_buffer = replay_buffer
         self.num_simulations = num_simulations
         self.batch_size = batch_size
@@ -63,6 +71,8 @@ class Trainer:
         self.optimizer_policy = optim.Adam(self.policy_network.parameters(), lr=lr_policy)
         self.optimizer_value = optim.Adam(self.value_network.parameters(), lr=lr_value)
 
+        self.verbose = verbose
+
         # Create directory to save models if it doesn't exist
         os.makedirs(self.save_path, exist_ok=True)
 
@@ -74,9 +84,12 @@ class Trainer:
         :param update_every: Number of episodes between each network update.
         """
         for episode in range(1, num_episodes + 1):
+            if self.verbose:
+                print(f"Episode {episode}/{num_episodes} - Starting episode.")
             self.env.reset()
             mcts = MCTS(
                 env=self.env,
+                transformer=self.transformer,
                 policy_network=self.policy_network,
                 value_network=self.value_network,
                 num_simulations=self.num_simulations
@@ -152,21 +165,39 @@ class Trainer:
         state_inputs = [self._prepare_input(state) for state in states]
         next_state_inputs = [self._prepare_input(state) for state in next_states]
 
-        state_inputs = torch.stack(state_inputs)
-        next_state_inputs = torch.stack(next_state_inputs)
-        actions = torch.tensor(actions, dtype=torch.long)
-        rewards = torch.tensor(rewards, dtype=torch.float32)
-        dones = torch.tensor(dones, dtype=torch.float32)
-        weights = torch.tensor(weights, dtype=torch.float32)
+        # Stack tensors
+        buffer_states = torch.cat([s['buffer'] for s in state_inputs], dim=0).to(self.transformer.device)  # [batch_size, num_items, 3]
+        ems_states = torch.cat([s['ems'] for s in state_inputs], dim=0).to(self.transformer.device)      # [batch_size, num_ems, 6]
+        ems_masks = torch.cat([s['ems_mask'] for s in state_inputs], dim=0).to(self.transformer.device)  # [batch_size, max_ems]
+        action_masks = torch.cat([s['action_mask'] for s in state_inputs], dim=0).to(self.transformer.device)  # [batch_size, action_dim]
+
+        buffer_next_states = torch.cat([s['buffer'] for s in next_state_inputs], dim=0).to(self.transformer.device)  # [batch_size, num_items, 3]
+        ems_next_states = torch.cat([s['ems'] for s in next_state_inputs], dim=0).to(self.transformer.device)      # [batch_size, num_ems, 6]
+        ems_next_masks = torch.cat([s['ems_mask'] for s in next_state_inputs], dim=0).to(self.transformer.device)  # [batch_size, max_ems]
+        # Assuming you have action_masks for next_states if needed
+
+        actions = torch.tensor(actions, dtype=torch.long).to(self.transformer.device)         # [batch_size]
+        rewards = torch.tensor(rewards, dtype=torch.float32).to(self.transformer.device)     # [batch_size]
+        dones = torch.tensor(dones, dtype=torch.float32).to(self.transformer.device)         # [batch_size]
+        weights = torch.tensor(weights, dtype=torch.float32).to(self.transformer.device)     # [batch_size]
 
         # -------------------- Train Policy Network --------------------
-        # Predict action probabilities
-        policy_logits = self.policy_network(state_inputs)  # Shape: (batch_size, num_actions)
-        # Flatten actions for loss computation
-        log_probs = torch.log_softmax(policy_logits, dim=1)
-        selected_log_probs = log_probs.gather(1, actions.unsqueeze(1)).squeeze(1)
+        # Pass through transformer to get features
+        ems_features, item_features = self.transformer(
+            ems_states,
+            buffer_states,
+            ems_mask=ems_masks,
+            buffer_mask=None  # Or create buffer_mask if needed
+        )
+
+        # Pass through Policy Network
+        policy_probs = self.policy_network(ems_features, item_features, action_masks)  # [batch_size, action_dim]
+
+        # Gather log probabilities of the selected actions
+        log_probs = torch.log(policy_probs.gather(1, actions.unsqueeze(1)) + 1e-10).squeeze(1)  # [batch_size]
+
         # Compute policy loss (negative log likelihood)
-        policy_loss = -selected_log_probs * weights
+        policy_loss = -log_probs * weights
 
         # Optimize Policy Network
         self.optimizer_policy.zero_grad()
@@ -175,11 +206,22 @@ class Trainer:
 
         # -------------------- Train Value Network --------------------
         # Predict state values
-        state_values = self.value_network(state_inputs).squeeze(1)  # Shape: (batch_size,)
+        state_values = self.value_network(ems_features, item_features).squeeze(1)  # [batch_size]
+
+        # Pass through transformer for next states
+        ems_next_features, item_next_features = self.transformer(
+            ems_next_states,
+            buffer_next_states,
+            ems_mask=ems_next_masks,
+            buffer_mask=None
+        )
+
+        # Predict next state values
+        next_values = self.value_network(ems_next_features, item_next_features).squeeze(1)  # [batch_size]
+
         # Compute target values
-        with torch.no_grad():
-            next_values = self.value_network(next_state_inputs).squeeze(1)
-            targets = rewards + self.gamma * next_values * (1 - dones)
+        targets = rewards + self.gamma * next_values * (1 - dones)
+
         # Compute value loss (mean squared error)
         value_loss = (state_values - targets) ** 2 * weights
         value_loss = value_loss.mean()
@@ -190,41 +232,56 @@ class Trainer:
         self.optimizer_value.step()
 
         # -------------------- Update Priorities in Replay Buffer --------------------
-        # Here we can use the TD error as priority
+        # Use the TD error as priority
         td_errors = (state_values - targets).abs().detach().cpu().numpy()
         self.replay_buffer.update_priorities(indices, td_errors + 1e-5)  # Add a small epsilon to avoid zero priority
 
-    def _prepare_input(self, observation: Dict[str, np.ndarray]) -> torch.Tensor:
+    def _prepare_input(self, observation: Dict[str, np.ndarray]) -> Dict[str, torch.Tensor]:
         """
-        Prepare the input tensor for the networks from the observation.
+        Prepare the input tensors for the networks from the observation.
 
         :param observation: The observation dictionary containing 'buffer' and 'ems'.
-        :return: A tensor ready to be input into the networks.
+        :return: A dictionary with prepared tensors.
         """
-        buffer = torch.tensor(observation['buffer'], dtype=torch.float32)
-        ems = torch.tensor(observation['ems'], dtype=torch.float32)
-        # Flatten and concatenate buffer and ems
-        input_tensor = torch.cat((buffer.flatten(), ems.flatten()))
-        return input_tensor
+        buffer = torch.tensor(observation['buffer'], dtype=torch.float32).unsqueeze(0)  # [1, num_items, 3]
+        ems = torch.tensor(observation['ems'], dtype=torch.float32).unsqueeze(0)        # [1, num_ems, 6]
+        num_ems = observation['ems'].shape[0]
+        ems_mask = torch.zeros(1, self.transformer.max_ems).bool().to(self.device)
+        ems_mask[:, :num_ems] = True  # True for real EMS, False for padding
+
+        # Generate action_mask from state
+        action_mask_np = self.env.generate_action_mask()
+        action_mask = torch.tensor(action_mask_np, dtype=torch.float32).unsqueeze(0).to(self.transformer.device)  # [1, action_dim]
+
+        return {
+            'buffer': buffer,
+            'ems': ems,
+            'ems_mask': ems_mask,
+            'action_mask': action_mask
+        }
 
     def _save_models(self, episode: int):
         """
-        Save the Policy and Value networks.
+        Save the Policy, Value networks and Transformer.
 
         :param episode: The current episode number (used in the filename).
         """
         policy_path = os.path.join(self.save_path, f"policy_net_episode_{episode}.pth")
         value_path = os.path.join(self.save_path, f"value_net_episode_{episode}.pth")
+        transformer_path = os.path.join(self.save_path, f"transformer_episode_{episode}.pth")
         torch.save(self.policy_network.state_dict(), policy_path)
         torch.save(self.value_network.state_dict(), value_path)
+        torch.save(self.transformer.state_dict(), transformer_path)
 
     def _load_models(self, episode: int):
         """
-        Load the Policy and Value networks from saved files.
+        Load the Policy, Value networks and Transformer from saved files.
 
         :param episode: The episode number of the saved models.
         """
         policy_path = os.path.join(self.save_path, f"policy_net_episode_{episode}.pth")
         value_path = os.path.join(self.save_path, f"value_net_episode_{episode}.pth")
-        self.policy_network.load_state_dict(torch.load(policy_path))
-        self.value_network.load_state_dict(torch.load(value_path))
+        transformer_path = os.path.join(self.save_path, f"transformer_episode_{episode}.pth")
+        self.policy_network.load_state_dict(torch.load(policy_path, map_location=self.device))
+        self.value_network.load_state_dict(torch.load(value_path, map_location=self.device))
+        self.transformer.load_state_dict(torch.load(transformer_path, map_location=self.device))

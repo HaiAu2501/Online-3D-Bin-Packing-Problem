@@ -41,6 +41,8 @@ class BinPackingTransformer(nn.Module):
         self.transformer_blocks = nn.ModuleList([
             TransformerBlock(d_model, nhead, dim_feedforward) for _ in range(num_layers)
         ])
+
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
     def forward(
         self, 
@@ -64,7 +66,7 @@ class BinPackingTransformer(nn.Module):
         # Embedding
         ems_embedded = self.ems_embedding(ems_list)  # [num_ems, batch_size, d_model]
         items_embedded = self.buffer_embedding(buffer_list)  # [num_items, batch_size, d_model]
-        
+
         batch_size, num_ems, _ = ems_list.size()
         if num_ems < self.max_ems:
             padding_size = self.max_ems - num_ems
