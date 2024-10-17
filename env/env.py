@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import seaborn as sns
 
-from ems import EMSManager
+from .ems import EMSManager
 
 class BinPacking3DEnv(gym.Env):
     """
@@ -47,6 +47,18 @@ class BinPacking3DEnv(gym.Env):
 
         # Intialize EMSManager
         self.ems_manager = EMSManager(bin_size=bin_size)
+
+        # Initialize the buffer with k items
+        self.buffer: List[Tuple[int, int, int]] = []
+        for i in range(self.buffer_size):
+            if i < len(self.items):
+                self.buffer.append(self.items[i])
+                self.current_item_index += 1
+            else:
+                self.buffer.append((0, 0, 0))
+
+        # Initialize the action mask
+        self.action_mask = self.generate_action_mask()
         
         """
         Define action space:
@@ -97,8 +109,8 @@ class BinPacking3DEnv(gym.Env):
         # Reset EMSManager
         self.ems_manager = EMSManager(bin_size=(self.W, self.L, self.H))
 
-        # Initialize the buffer with k items
-        self.buffer: List[Tuple[int, int, int]] = []
+        # Reset the buffer with k items
+        self.buffer = []
         for i in range(self.buffer_size):
             if i < len(self.items):
                 self.buffer.append(self.items[i])
@@ -264,6 +276,10 @@ class BinPacking3DEnv(gym.Env):
         print("\nBuffer:")
         for item in self.buffer:
             print(item)
+        print("\nPlaced items:")
+        for item in self.placed_items:
+            print(item)
+        print("\n-----------------------------------")
 
     def visualize(self):
         if not self.placed_items:

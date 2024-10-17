@@ -6,9 +6,6 @@ from torch import Tensor
 from typing import Tuple
 import logging
 
-# Thiết lập logging
-logger = logging.getLogger(__name__)
-
 class ValueNetwork(nn.Module):
     def __init__(
         self, 
@@ -46,8 +43,6 @@ class ValueNetwork(nn.Module):
             nn.Tanh()
         )
         
-        logger.debug("ValueNetwork initialized")
-        
     def forward(
         self, 
         ems_features: Tensor, 
@@ -63,21 +58,15 @@ class ValueNetwork(nn.Module):
         Returns:
             Tensor: [batch_size, 1] - Giá trị dự đoán cho mỗi sample
         """
-        logger.debug("ValueNetwork forward pass started")
         
         # Đưa qua MLP riêng biệt
         ems_out = self.ems_mlp(ems_features)  # [batch_size, hidden_dim]
         item_out = self.item_mlp(item_features)  # [batch_size, hidden_dim]
         
-        logger.debug("After MLPs - ems_out shape: {}, item_out shape: {}".format(ems_out.shape, item_out.shape))
-        
         # Concatenation
         combined = torch.cat((ems_out, item_out), dim=1)  # [batch_size, hidden_dim * 2]
-        logger.debug("After concatenation - combined shape: {}".format(combined.shape))
         
         # Đưa qua final MLP và áp dụng tanh
         value = self.final_mlp(combined)  # [batch_size, 1]
-        logger.debug("After final MLP and Tanh - value shape: {}".format(value.shape))
-        
-        logger.debug("ValueNetwork forward pass completed")
+
         return value

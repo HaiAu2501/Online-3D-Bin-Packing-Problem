@@ -101,38 +101,28 @@ class TransformerBlock(nn.Module):
         Returns:
             Tuple[Tensor, Tensor]: Cập nhật EMS và Item embeddings
         """
-        logger.debug("Starting TransformerBlock forward pass")
         
         # --- Self-Attention cho EMS ---
-        logger.debug("Self-Attention cho EMS")
         ems_self_attn_output, _ = self.self_attn_ems(ems, ems, ems, key_padding_mask=~ems_mask if ems_mask is not None else None)
         ems = ems + self.dropout(ems_self_attn_output)  # Skip connection
         ems = self.norm1_ems(ems)
-        logger.debug("After Self-Attention và Add & Norm cho EMS")
         
         # --- Self-Attention cho Item ---
-        logger.debug("Self-Attention cho Item")
         items_self_attn_output, _ = self.self_attn_item(items, items, items, key_padding_mask=~items_mask if items_mask is not None else None)
         items = items + self.dropout(items_self_attn_output)  # Skip connection
         items = self.norm1_item(items)
-        logger.debug("After Self-Attention và Add & Norm cho Item")
         
         # --- MLP cho EMS ---
-        logger.debug("MLP cho EMS")
         ems_mlp_output = self.mlp_ems(ems)
         ems = ems + self.dropout(ems_mlp_output)  # Skip connection
         ems = self.norm2_ems(ems)
-        logger.debug("After MLP và Add & Norm cho EMS")
         
         # --- MLP cho Item ---
-        logger.debug("MLP cho Item")
         items_mlp_output = self.mlp_item(items)
         items = items + self.dropout(items_mlp_output)  # Skip connection
         items = self.norm2_item(items)
-        logger.debug("After MLP và Add & Norm cho Item")
         
         # --- Cross-Attention: EMS attends to Items ---
-        logger.debug("Cross-Attention: EMS attends to Items")
         ems_cross_attn_output, _ = self.cross_attn_ems(
             ems,       # Query
             items,     # Key
@@ -141,10 +131,8 @@ class TransformerBlock(nn.Module):
         )
         ems = ems + self.dropout(ems_cross_attn_output)  # Skip connection
         ems = self.norm3_ems(ems)
-        logger.debug("After Cross-Attention và Add & Norm cho EMS")
         
         # --- Cross-Attention: Items attends to EMS ---
-        logger.debug("Cross-Attention: Items attends to EMS")
         items_cross_attn_output, _ = self.cross_attn_item(
             items,      # Query
             ems,        # Key
@@ -153,21 +141,15 @@ class TransformerBlock(nn.Module):
         )
         items = items + self.dropout(items_cross_attn_output)  # Skip connection
         items = self.norm3_item(items)
-        logger.debug("After Cross-Attention và Add & Norm cho Item")
         
         # --- MLP cuối cùng cho EMS ---
-        logger.debug("MLP cuối cùng cho EMS")
         ems_final_mlp = self.mlp_final_ems(ems)
         ems = ems + self.dropout(ems_final_mlp)  # Skip connection
         ems = self.norm4_ems(ems)
-        logger.debug("After MLP cuối cùng và Add & Norm cho EMS")
         
         # --- MLP cuối cùng cho Item ---
-        logger.debug("MLP cuối cùng cho Item")
         items_final_mlp = self.mlp_final_item(items)
         items = items + self.dropout(items_final_mlp)  # Skip connection
         items = self.norm4_item(items)
-        logger.debug("After MLP cuối cùng và Add & Norm cho Item")
-        
-        logger.debug("TransformerBlock forward pass completed")
+
         return ems, items

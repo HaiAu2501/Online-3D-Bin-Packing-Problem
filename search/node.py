@@ -43,7 +43,7 @@ class Node:
         if self.is_terminal:
             return []
 
-        action_mask = self.state.generate_action_mask()
+        action_mask = self.state.action_mask
         W, L, num_rotations, buffer_size = self.state.W, self.state.L, self.state.num_rotations, self.state.buffer_size
         valid_actions = []
 
@@ -97,6 +97,7 @@ class Node:
         action = self.untried_actions.pop()
         # Apply the action to the current state to get the next state
         _, _, done, truncated, _ = self.state.step(action)
+        
 
         # Create a new child node with the resulting state
         child_node = Node(state=self.state, parent=self, action=action)

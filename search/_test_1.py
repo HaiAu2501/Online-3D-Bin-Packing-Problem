@@ -3,38 +3,45 @@
 import torch
 import numpy as np
 import math
+import sys
+import os
+
+sys.path.append(os.getcwd())
 
 from mcts import MCTS
-from replay_buffer import PrioritizedReplayBuffer
 from models.transformer import BinPackingTransformer
 from models.policy_net import PolicyNetwork
 from models.value_net import ValueNetwork
-
+from replay_buffer import PrioritizedReplayBuffer
+from env.env import BinPacking3DEnv
 
 def test_mcts_integration():
     # Thiết lập thông số
-    batch_size = 1  # Trong MCTS, thường là một batch
-    num_ems = 10
-    num_items = 15
-    d_model = 128
-    hidden_dim = 256
-    W = 10
-    L = 10
-    num_rotations = 4
-    buffer_size = 20
-    max_ems = 1000  # Ví dụ: W * L * H
+    bin_size = (10, 10, 10)  # W, L, H
+    items = [
+        (2, 2, 2),
+        (3, 3, 3),
+        (1, 4, 2),
+        (2, 1, 3),
+        (3, 2, 1)
+    ]
+    buffer_size = 2
+    num_rotations = 2
+    max_ems = bin_size[0] * bin_size[1] * bin_size[2]  # 1000
     num_simulations = 10  # Giảm số lượng mô phỏng cho test
-    
-    # Tạo dummy environment
-    env = BinPacking3DEnv(W=W, L=L, H=10, buffer_size=buffer_size)  # Điều chỉnh H theo yêu cầu
+    c_param = math.sqrt(2)
 
-    # Tạo dummy inputs cho Transformer
-    ems_input = torch.randint(0, 100, (batch_size, num_ems, 6)).float()
-    buffer_input = torch.randint(0, 50, (batch_size, num_items, 3)).float()
+    # Tạo dummy environment
+    env = BinPacking3DEnv(
+        bin_size=bin_size,
+        items=items,
+        buffer_size=buffer_size,
+        num_rotations=num_rotations
+    )
 
     # Khởi tạo các mạng neural
     transformer = BinPackingTransformer(
-        d_model=d_model,
+        d_model=128,
         nhead=8,
         num_layers=3,
         dim_feedforward=512,
@@ -42,17 +49,17 @@ def test_mcts_integration():
     )
     
     policy_net = PolicyNetwork(
-        d_model=d_model,
-        hidden_dim=hidden_dim,
-        W=W,
-        L=L,
+        d_model=128,
+        hidden_dim=256,
+        W=bin_size[0],
+        L=bin_size[1],
         num_rotations=num_rotations,
         buffer_size=buffer_size
     )
     
     value_net = ValueNetwork(
-        d_model=d_model,
-        hidden_dim=hidden_dim
+        d_model=128,
+        hidden_dim=256
     )
     
     # Khởi tạo Prioritized Replay Buffer
@@ -66,7 +73,7 @@ def test_mcts_integration():
         value_network=value_net,
         replay_buffer=replay_buffer,
         num_simulations=num_simulations,
-        c_param=math.sqrt(2)
+        c_param=c_param
     )
     
     # Chạy MCTS search
@@ -78,11 +85,14 @@ def test_mcts_integration():
     
     # Kiểm tra nội dung của PRB
     if len(replay_buffer) > 0:
-        sample_state, sample_policy, sample_reward = replay_buffer.sample(1)
-        print("Sample from Replay Buffer:")
-        print("State:", sample_state[0])
-        print("Policy:", sample_policy[0])
-        print("Reward:", sample_reward[0])
+        sample_states, sample_policies, sample_rewards = replay_buffer.sample(1)
+        print("\nSample from Replay Buffer:")
+        print("State:")
+        print(sample_states[0])  # In state dictionary
+        print("\nPolicy:")
+        print(sample_policies[0])  # In policy array
+        print("\nReward:")
+        print(sample_rewards[0])  # In reward value
 
 if __name__ == "__main__":
     test_mcts_integration()

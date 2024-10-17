@@ -6,15 +6,12 @@ from torch import Tensor
 from typing import Tuple
 import logging
 
-# Thiết lập logging
-logger = logging.getLogger(__name__)
-
 class PolicyNetwork(nn.Module):
     def __init__(
         self, 
         d_model: int = 128, 
         hidden_dim: int = 256, 
-        **kwargs
+        **kwargs,
     ):
         """
         Policy Network for Bin Packing.
@@ -28,7 +25,7 @@ class PolicyNetwork(nn.Module):
  
         self.hidden_dim = hidden_dim
         if 'W' not in kwargs or 'L' not in kwargs or 'num_rotations' not in kwargs or 'buffer_size' not in kwargs:
-            raise ValueError("Please provide W, L, num_rotations, and buffer_size or action_dim.")
+            raise ValueError("Please provide (W, L, num_rotations, buffer_size) or action_dim.")
         self.output_dim = kwargs.get('action_dim',  kwargs['W'] * kwargs['L'] * kwargs['num_rotations'] * kwargs['buffer_size'])
         
         self.ems_mlp = nn.Sequential(

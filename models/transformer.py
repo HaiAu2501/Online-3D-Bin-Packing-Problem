@@ -5,8 +5,8 @@ import torch.nn as nn
 from torch import Tensor
 from typing import Tuple
 
-from block import TransformerBlock
-from embedding import EMSEmbedding, BufferEmbedding
+from .block import TransformerBlock
+from .embedding import EMSEmbedding, BufferEmbedding
 
 class BinPackingTransformer(nn.Module):
     def __init__(

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict
 import torch
 import numpy as np
 
@@ -12,7 +12,7 @@ from env.env import BinPacking3DEnv
 from models.policy_net import PolicyNetwork
 from models.value_net import ValueNetwork
 from models.transformer import BinPackingTransformer
-from replay_buffer import PrioritizedReplayBuffer
+from replay_buffer import PrioritizedReplayBuffer  # Import PrioritizedReplayBuffer
 
 class MCTS:
     def __init__(
@@ -52,7 +52,7 @@ class MCTS:
         :return: The best action determined by MCTS.
         """
         for _ in range(self.num_simulations):
-            node: Node = self.root
+            node = self.root
             state = self.env.clone()  # Clone the environment for simulation
 
             # -------------------- SELECTION --------------------
@@ -85,33 +85,34 @@ class MCTS:
 
             # -------------------- SAVE EXPERIENCE TO REPLAY BUFFER --------------------
             # Extract state before action, policy, and reward
-            # Here, we assume that the node corresponds to a specific state
-            # and that the action taken leads to the current node
-            # You might need to adjust based on your Node and environment implementation
+            parent_node = node.parent
+            if parent_node is not None:
+                parent_state = parent_node.state
+                observation = parent_state._get_observation()
 
-            # Get observation from the parent node's state
-            parent_state = node.parent.state if node.parent else self.env
-            observation = parent_state._get_observation()
+                # Extract buffer and EMS from observation
+                buffer_tensor = torch.tensor(observation['buffer'], dtype=torch.float32)
+                ems_tensor = torch.tensor(observation['ems'], dtype=torch.float32)
 
-            # Extract buffer and EMS from observation
-            buffer_tensor = torch.tensor(observation['buffer'], dtype=torch.float32)
-            ems_tensor = torch.tensor(observation['ems'], dtype=torch.float32)
+                # Pass through Transformer to get features
+                with torch.no_grad():
+                    ems_features, item_features = self.transformer(ems_tensor.unsqueeze(0), buffer_tensor.unsqueeze(0))
+                    ems_features = ems_features  # [1, d_model]
+                    item_features = item_features  # [1, d_model]
 
-            # Pass through Transformer to get features
-            ems_features, item_features = self.transformer(buffer_tensor.unsqueeze(0), ems_tensor.unsqueeze(0))
-            ems_features = ems_features.detach()  # Detach to prevent gradient computation
-            item_features = item_features.detach()
+                    # Pass features through Policy Network to get policy
+                    # Generate action_mask based on parent_state
+                    action_mask = parent_state.action_mask
+                    action_mask_tensor = torch.tensor(action_mask, dtype=torch.float32).view(1, -1)  # [1, W * L * num_rotations * buffer_size]
 
-            # Pass features through Policy Network to get policy
-            with torch.no_grad():
-                policy = self.policy_network(ems_features, item_features, action_mask=torch.ones(1, self.transformer.W * self.transformer.L * self.transformer.num_rotations * self.transformer.buffer_size))
-                policy = policy.squeeze(0).cpu().numpy()  # Convert to numpy array
+                    policy = self.policy_network(ems_features, item_features, action_mask_tensor)  # [1, output_dim]
+                    policy = policy.squeeze(0).cpu().numpy()  # [output_dim]
 
-            # Reward is the total_reward from simulation
-            reward = total_reward
+                # Reward is the total_reward from simulation
+                reward = total_reward
 
-            # Save (state, policy, reward) to replay buffer with priority equal to reward
-            self.replay_buffer.add(observation, policy, reward)
+                # Save (state, policy, reward) to replay buffer with priority equal to reward
+                self.replay_buffer.add(observation, policy, reward)
 
         # After simulations, select the action with the highest visit count
         best_action = self._get_best_action()
@@ -129,42 +130,40 @@ class MCTS:
 
         while not done:
             observation = state._get_observation()
-            action_mask = state.generate_action_mask()
+            action_mask = state.action_mask
 
             # Extract buffer and EMS from observation
             buffer_tensor = torch.tensor(observation['buffer'], dtype=torch.float32)
             ems_tensor = torch.tensor(observation['ems'], dtype=torch.float32)
 
             # Pass through Transformer to get features
-            ems_features, item_features = self.transformer(buffer_tensor.unsqueeze(0), ems_tensor.unsqueeze(0))
-            ems_features = ems_features.detach()  # Detach to prevent gradient computation
-            item_features = item_features.detach()
+            with torch.no_grad():
+                ems_features, item_features = self.transformer(ems_tensor.unsqueeze(0), buffer_tensor.unsqueeze(0))
+                ems_features = ems_features  # [1, d_model]
+                item_features = item_features  # [1, d_model]
 
-            # Get policy probabilities from Policy Network
-            policy = self.policy_network(ems_features, item_features, action_mask=torch.tensor(action_mask).unsqueeze(0))
-            policy = policy.squeeze(0).cpu().numpy()  # Convert to numpy array
+                # Get policy probabilities from Policy Network
+                action_mask_tensor = torch.tensor(action_mask, dtype=torch.float32).view(1, -1)  # [1, W * L * num_rotations * buffer_size]
+                policy = self.policy_network(ems_features, item_features, action_mask_tensor)  # [1, output_dim]
+                policy = policy.squeeze(0).cpu().numpy()  # [output_dim]
 
-            # Apply action mask: set probabilities of invalid actions to 0
-            policy *= action_mask.flatten()
-
-            # Normalize the policy to ensure it sums to 1
+            # If all actions are invalid, break the simulation
             if policy.sum() == 0:
-                # If no valid actions, terminate simulation
                 break
-            policy /= policy.sum()
 
             # Sample an action based on the probabilities
             action_index = np.random.choice(len(policy), p=policy)
 
             # Decode the action index back to (x, y, rotation, item_index)
-            W, L, num_rotations, buffer_size = self.transformer.W, self.transformer.L, self.transformer.num_rotations, self.transformer.buffer_size
+            W, L, num_rotations, buffer_size = state.W, state.L, state.num_rotations, state.buffer_size
             total_rot_buffer = num_rotations * buffer_size
-            total_y_buffer = L * total_rot_buffer
 
             x = action_index // (L * total_rot_buffer)
-            y = (action_index % (L * total_rot_buffer)) // total_rot_buffer
-            rotation = (action_index % total_rot_buffer) // buffer_size
-            item_index = action_index % buffer_size
+            remainder = action_index % (L * total_rot_buffer)
+            y = remainder // total_rot_buffer
+            remainder = remainder % total_rot_buffer
+            rotation = remainder // buffer_size
+            item_index = remainder % buffer_size
 
             selected_action = (x, y, rotation, item_index)
 
@@ -179,11 +178,9 @@ class MCTS:
         final_observation = state._get_observation()
         buffer_tensor = torch.tensor(final_observation['buffer'], dtype=torch.float32)
         ems_tensor = torch.tensor(final_observation['ems'], dtype=torch.float32)
-        ems_features, item_features = self.transformer(buffer_tensor.unsqueeze(0), ems_tensor.unsqueeze(0))
-        ems_features = ems_features.detach()
-        item_features = item_features.detach()
 
         with torch.no_grad():
+            ems_features, item_features = self.transformer(ems_tensor.unsqueeze(0), buffer_tensor.unsqueeze(0), )
             value = self.value_network(ems_features, item_features).squeeze(0).item()
             value = torch.tanh(torch.tensor(value)).item()  # Normalize the value to [-1, 1]
 
