@@ -76,6 +76,27 @@ class MCTS:
                     child_node.is_terminal = done or truncated
                     node = child_node
 
+                    # -------------------- LƯU TRỪNG TRẠNG THÁI VÀ POLICY CHO CHILD_NODE --------------------
+                    # Trích xuất đặc trưng và policy cho child_node ngay tại thời điểm mở rộng
+                    observation = child_node.state._get_observation()
+                    buffer_tensor = torch.tensor(observation['buffer'], dtype=torch.float32)
+                    ems_tensor = torch.tensor(observation['ems'], dtype=torch.float32)
+
+                    with torch.no_grad():
+                        ems_features, item_features = self.transformer(ems_tensor.unsqueeze(0), buffer_tensor.unsqueeze(0))
+                        ems_features = ems_features  # [1, d_model]
+                        item_features = item_features  # [1, d_model]
+
+                        # Generate action_mask based on child_node's state
+                        action_mask = child_node.state.action_mask
+                        action_mask_tensor = torch.tensor(action_mask, dtype=torch.float32).view(1, -1)  # [1, W * L * num_rotations * buffer_size]
+
+                        policy = self.policy_network(ems_features, item_features, action_mask_tensor)  # [1, output_dim]
+                        policy = policy.squeeze(0).cpu().numpy()  # [output_dim]
+
+                    # Lưu policy vào child_node
+                    child_node.policy = policy
+
             # -------------------- SIMULATION (ROLLOUT) --------------------
             # Perform a simulation from the current state
             total_reward, done = self._simulate(state)
@@ -84,35 +105,17 @@ class MCTS:
             self._backpropagate(node, total_reward)
 
             # -------------------- SAVE EXPERIENCE TO REPLAY BUFFER --------------------
-            # Extract state before action, policy, and reward
+            # Sử dụng policy đã lưu trong parent_node để lưu trải nghiệm vào PRB
             parent_node = node.parent
-            if parent_node is not None:
+            if parent_node is not None and parent_node.policy is not None:
                 parent_state = parent_node.state
                 observation = parent_state._get_observation()
-
-                # Extract buffer and EMS from observation
-                buffer_tensor = torch.tensor(observation['buffer'], dtype=torch.float32)
-                ems_tensor = torch.tensor(observation['ems'], dtype=torch.float32)
-
-                # Pass through Transformer to get features
-                with torch.no_grad():
-                    ems_features, item_features = self.transformer(ems_tensor.unsqueeze(0), buffer_tensor.unsqueeze(0))
-                    ems_features = ems_features  # [1, d_model]
-                    item_features = item_features  # [1, d_model]
-
-                    # Pass features through Policy Network to get policy
-                    # Generate action_mask based on parent_state
-                    action_mask = parent_state.action_mask
-                    action_mask_tensor = torch.tensor(action_mask, dtype=torch.float32).view(1, -1)  # [1, W * L * num_rotations * buffer_size]
-
-                    policy = self.policy_network(ems_features, item_features, action_mask_tensor)  # [1, output_dim]
-                    policy = policy.squeeze(0).cpu().numpy()  # [output_dim]
 
                 # Reward is the total_reward from simulation
                 reward = total_reward
 
                 # Save (state, policy, reward) to replay buffer with priority equal to reward
-                self.replay_buffer.add(observation, policy, reward)
+                self.replay_buffer.add(observation, parent_node.policy, reward)
 
         # After simulations, select the action with the highest visit count
         best_action = self._get_best_action()
@@ -147,7 +150,9 @@ class MCTS:
                 policy = self.policy_network(ems_features, item_features, action_mask_tensor)  # [1, output_dim]
                 policy = policy.squeeze(0).cpu().numpy()  # [output_dim]
 
-            # If all actions are invalid, break the simulation
+            # Không cần nhân lại với action_mask vì Policy Network đã làm
+
+            # Nếu không có hành động hợp lệ, terminate simulation
             if policy.sum() == 0:
                 break
 
@@ -180,7 +185,7 @@ class MCTS:
         ems_tensor = torch.tensor(final_observation['ems'], dtype=torch.float32)
 
         with torch.no_grad():
-            ems_features, item_features = self.transformer(ems_tensor.unsqueeze(0), buffer_tensor.unsqueeze(0), )
+            ems_features, item_features = self.transformer(ems_tensor.unsqueeze(0), buffer_tensor.unsqueeze(0))
             value = self.value_network(ems_features, item_features).squeeze(0).item()
             value = torch.tanh(torch.tensor(value)).item()  # Normalize the value to [-1, 1]
 

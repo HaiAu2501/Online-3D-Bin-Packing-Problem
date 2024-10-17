@@ -34,6 +34,9 @@ class Node:
 
         self.untried_actions: List[Tuple[int, int, int, int]] = self.get_valid_actions() if not self.is_terminal else []  # Actions not yet tried
 
+        self.policy: Optional[np.ndarray] = None  # Action probabilities
+
+
     def get_valid_actions(self) -> List[Tuple[int, int, int, int]]:
         """
         Retrieve a list of valid actions from the current state.
@@ -95,9 +98,9 @@ class Node:
 
         # Select an action to try
         action = self.untried_actions.pop()
+
         # Apply the action to the current state to get the next state
         _, _, done, truncated, _ = self.state.step(action)
-        
 
         # Create a new child node with the resulting state
         child_node = Node(state=self.state, parent=self, action=action)

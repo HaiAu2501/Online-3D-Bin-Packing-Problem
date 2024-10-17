@@ -1,5 +1,3 @@
-# env/env.py
-
 import gymnasium as gym
 from gymnasium import spaces
 import numpy as np
@@ -8,7 +6,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import seaborn as sns
 
-from .ems import EMSManager
+from ems import EMSManager
 
 class BinPacking3DEnv(gym.Env):
     """
@@ -262,10 +260,11 @@ class BinPacking3DEnv(gym.Env):
 
         return action_mask
 
-    def render(self):
+    def render(self, verbose: bool = False):
         """
         Render the environment.
         """
+        print("\n-----------------------------------")
         print("\nCurrent height map:")
         for y in reversed(range(self.height_map.shape[1])):
             row = ""
@@ -279,6 +278,20 @@ class BinPacking3DEnv(gym.Env):
         print("\nPlaced items:")
         for item in self.placed_items:
             print(item)
+
+        if verbose:
+            # Show action mask
+            print(f'Action mask shape: {self.action_mask.shape}')
+            for idx, item in enumerate(self.buffer):
+                print(f'Action mask for item {self.buffer[idx]}:')
+                for rot in range(self.num_rotations):
+                    print(f'Rotation {rot}:')
+                    for x in range(self.W):
+                        row = ""
+                        for y in range(self.L):
+                            row += f"{self.action_mask[x, y, rot, idx]} "
+                        print(row)
+                    print("\n")
         print("\n-----------------------------------")
 
     def visualize(self):

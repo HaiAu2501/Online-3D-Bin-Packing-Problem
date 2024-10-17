@@ -1,4 +1,4 @@
-from env import BinPacking3DEnv
+from env.env import BinPacking3DEnv
 
 if __name__ == "__main__":
     # Define bin size and items
@@ -24,7 +24,7 @@ if __name__ == "__main__":
     action1 = (0, 0, 0, 0)
     observation, reward, done, truncated, info = env.step(action1)
     print("\nAfter placing first box:")
-    env.render()
+    env.render(verbose=True)
     print(f"Reward: {reward}, Done: {done}, Info: {info}")
 
     # Place first item of the buffer at (2, 0) with rotation 1
