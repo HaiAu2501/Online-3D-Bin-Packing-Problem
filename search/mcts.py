@@ -3,25 +3,31 @@
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple, Dict
+from typing import Optional, Tuple, List
 import torch
 import numpy as np
 
+if TYPE_CHECKING:
+    from env.env import BinPacking3DEnv
+
 from node import Node
-from env.env import BinPacking3DEnv
 from models.policy_net import PolicyNetwork
 from models.value_net import ValueNetwork
-from models.transformer import BinPackingTransformer
-from replay_buffer import PrioritizedReplayBuffer
 
 class MCTS:
+    class NodeWrapper:
+        """
+        A wrapper to hold additional information for training.
+        """
+        def __init__(self, node: Node, parent_state: Optional[BinPacking3DEnv] = None):
+            self.node = node
+            self.parent_state = parent_state
+
     def __init__(
         self,
         env: BinPacking3DEnv,
-        transformer: BinPackingTransformer,
         policy_network: PolicyNetwork,
         value_network: ValueNetwork,
-        replay_buffer: PrioritizedReplayBuffer,
         num_simulations: int = 1000,
         c_param: float = math.sqrt(2)
     ):
@@ -29,101 +35,50 @@ class MCTS:
         Initialize the MCTS search.
 
         :param env: The environment to search in.
-        :param transformer: The Transformer network for feature extraction.
-        :param policy_network: The Policy Network for guiding action selection.
-        :param value_network: The Value Network for evaluating states.
-        :param replay_buffer: The Prioritized Replay Buffer for storing experiences.
+        :param policy_network: The Policy Network.
+        :param value_network: The Value Network.
         :param num_simulations: The number of simulations to run.
         :param c_param: The exploration parameter for UCB1.
         """
         self.env = env.clone()  # Use the clone method to copy the environment
-        self.transformer = transformer
         self.policy_network = policy_network
         self.value_network = value_network
-        self.replay_buffer = replay_buffer
         self.num_simulations = num_simulations
         self.c_param = c_param
         self.root = Node(state=self.env)  # Initialize the root node with the cloned state
 
-    def search(self) -> Optional[Tuple[int, int, int, int]]:
+    def search(self):
         """
-        Perform the MCTS search to determine the best action.
-
-        :return: The best action determined by MCTS.
+        Run the MCTS search without returning a best action.
         """
         for _ in range(self.num_simulations):
             node = self.root
-            state = self.env.clone()  # Clone the environment for simulation
+            state = self.env.clone()
 
             # -------------------- SELECTION --------------------
             # Traverse the tree until a node is found that can be expanded
             while node.is_fully_expanded() and node.children:
-                if node.policy is None:
-                    # Tính toán policy cho node hiện tại
-                    self._compute_policy(node)
-
                 node = node.best_child(self.c_param)
-                if node is None:
-                    break
                 action = node.action
                 _, _, done, _, _ = state.step(action)
                 if done:
                     break
 
             # -------------------- EXPANSION --------------------
-            # If the node is not fully expanded, expand it by adding a child
+            # If the node is not fully expanded and not terminal, expand it by adding a child
             if not node.is_fully_expanded() and not node.is_terminal:
                 child_node = node.expand()
                 if child_node is not None:
-                    # Apply the action to the cloned state
                     _, _, done, truncated, _ = state.step(child_node.action)
                     child_node.is_terminal = done or truncated
                     node = child_node
 
             # -------------------- SIMULATION (ROLLOUT) --------------------
-            # Perform a simulation from the current state
+            # Perform a simulation from the current state 
             total_reward, done = self._simulate(state)
 
             # -------------------- BACKPROPAGATION --------------------
             self._backpropagate(node, total_reward)
-
-            # -------------------- SAVE EXPERIENCE TO REPLAY BUFFER --------------------
-            # Sử dụng policy đã lưu trong parent_node để lưu trải nghiệm vào PRB
-            parent_node = node.parent
-            if parent_node is not None:
-                if parent_node.policy is None:
-                    # Tính toán policy cho parent_node
-                    self._compute_policy(parent_node)
-
-                # Lưu trải nghiệm vào PRB
-                parent_state = parent_node.state
-                observation = parent_state._get_observation()
-                reward = total_reward
-
-                self.replay_buffer.add(observation, parent_node.policy, reward)
-
-        # After simulations, select the action with the highest visit count
-        best_action = self._get_best_action()
-        return best_action
-
-    def _compute_policy(self, node: Node):
-        """
-        Tính toán và lưu trữ policy cho node nếu chưa có.
-        """
-        observation = node.state._get_observation()
-        buffer_tensor = torch.tensor(observation['buffer'], dtype=torch.float32)
-        ems_tensor = torch.tensor(observation['ems'], dtype=torch.float32)
-
-        with torch.no_grad():
-            ems_features, item_features = self.transformer(ems_tensor.unsqueeze(0), buffer_tensor.unsqueeze(0))
-            action_mask = node.state.action_mask
-            action_mask_tensor = torch.tensor(action_mask, dtype=torch.float32).view(1, -1)  # [1, W * L * num_rotations * buffer_size]
-
-            policy = self.policy_network(ems_features, item_features, action_mask_tensor)  # [1, output_dim]
-            policy = policy.squeeze(0).cpu().numpy()  # [output_dim]
-
-        # Gán policy cho node
-        node.policy = policy
 
     def _simulate(self, state: BinPacking3DEnv) -> Tuple[float, bool]:
         """
@@ -139,38 +94,38 @@ class MCTS:
             observation = state._get_observation()
             action_mask = state.action_mask
 
-            # Extract buffer and EMS from observation
+            # Prepare input for the policy network
             buffer_tensor = torch.tensor(observation['buffer'], dtype=torch.float32)
             ems_tensor = torch.tensor(observation['ems'], dtype=torch.float32)
+            # Flatten and concatenate buffer and ems for the network input
+            input_tensor = torch.cat((buffer_tensor.flatten(), ems_tensor.flatten())).unsqueeze(0)
 
-            # Pass through Transformer to get features
-            with torch.no_grad():
-                ems_features, item_features = self.transformer(ems_tensor.unsqueeze(0), buffer_tensor.unsqueeze(0))
-                ems_features = ems_features  # [1, d_model]
-                item_features = item_features  # [1, d_model]
+            # Get policy logits from the policy network
+            policy_logits = self.policy_network(input_tensor).squeeze(0)  # Shape: (num_actions,)
 
-                # Get policy probabilities from Policy Network
-                action_mask_tensor = torch.tensor(action_mask, dtype=torch.float32).view(1, -1)  # [1, W * L * num_rotations * buffer_size]
-                policy = self.policy_network(ems_features, item_features, action_mask_tensor)  # [1, output_dim]
-                policy = policy.squeeze(0).cpu().numpy()  # [output_dim]
+            # Apply action mask: set logits of invalid actions to a very low value
+            action_mask_flat = action_mask.flatten()
+            masked_logits = policy_logits + (action_mask_flat == 0).float() * -1e9  # Effectively -inf for invalid actions
 
-            # Nếu không có hành động hợp lệ, terminate simulation
-            if policy.sum() == 0:
+            # Convert masked logits to probabilities
+            action_probs = torch.softmax(masked_logits, dim=0).detach().numpy()
+
+            # If no valid actions, terminate the simulation
+            if np.sum(action_mask) == 0:
                 break
 
             # Sample an action based on the probabilities
-            action_index = np.random.choice(len(policy), p=policy)
+            action_index = np.random.choice(len(action_probs), p=action_probs / np.sum(action_probs))
 
             # Decode the action index back to (x, y, rotation, item_index)
             W, L, num_rotations, buffer_size = state.W, state.L, state.num_rotations, state.buffer_size
             total_rot_buffer = num_rotations * buffer_size
+            total_y_buffer = L * total_rot_buffer
 
             x = action_index // (L * total_rot_buffer)
-            remainder = action_index % (L * total_rot_buffer)
-            y = remainder // total_rot_buffer
-            remainder = remainder % total_rot_buffer
-            rotation = remainder // buffer_size
-            item_index = remainder % buffer_size
+            y = (action_index % (L * total_rot_buffer)) // total_rot_buffer
+            rotation = (action_index % total_rot_buffer) // buffer_size
+            item_index = action_index % buffer_size
 
             selected_action = (x, y, rotation, item_index)
 
@@ -181,15 +136,13 @@ class MCTS:
             if truncated:
                 done = True
 
-        # Use the Value Network to estimate the value of the final state
+        # Use the value network to estimate the value of the final state
         final_observation = state._get_observation()
         buffer_tensor = torch.tensor(final_observation['buffer'], dtype=torch.float32)
         ems_tensor = torch.tensor(final_observation['ems'], dtype=torch.float32)
-
-        with torch.no_grad():
-            ems_features, item_features = self.transformer(ems_tensor.unsqueeze(0), buffer_tensor.unsqueeze(0))
-            value = self.value_network(ems_features, item_features).squeeze(0).item()
-            value = torch.tanh(torch.tensor(value)).item()  # Normalize the value to [-1, 1]
+        input_tensor = torch.cat((buffer_tensor.flatten(), ems_tensor.flatten())).unsqueeze(0)
+        value = self.value_network(input_tensor).squeeze(0).item()
+        value = torch.tanh(torch.tensor(value)).item()  # Normalize the value
 
         total_reward += value  # Combine simulation reward with value network's estimate
 
@@ -206,16 +159,3 @@ class MCTS:
             node.visits += 1
             node.value += reward
             node = node.parent
-
-    def _get_best_action(self) -> Optional[Tuple[int, int, int, int]]:
-        """
-        Select the best action from the root based on the highest visit count.
-
-        :return: The best action as a tuple.
-        """
-        if not self.root.children:
-            return None  # No actions were explored
-
-        # Select the child with the maximum number of visits
-        best_child = max(self.root.children.values(), key=lambda n: n.visits)
-        return best_child.action
