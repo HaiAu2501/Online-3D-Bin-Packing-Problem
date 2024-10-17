@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import seaborn as sns
 
-from ems import EMSManager
+from .ems import EMSManager
 
 class BinPacking3DEnv(gym.Env):
     """
@@ -149,6 +149,10 @@ class BinPacking3DEnv(gym.Env):
         rotated_item = self._get_rotated_item(selected_item, rotation)
         rotated_w, rotated_l, rotated_h = rotated_item
 
+        # DEBUG: Print the details of the action and the selected item
+        # print(f'Action: x={x}, y={y}, rotation={rotation}, item_index={item_index}')
+        # print(f'Selected item: {selected_item} -> {rotated_item}')
+
         # Determine z-coordinate based on the height map (place the item on top of the existing items)
         z = max([self.height_map[xi][yi] for xi in range(x, x + rotated_w) for yi in range(y, y + rotated_l)])
 
@@ -177,6 +181,8 @@ class BinPacking3DEnv(gym.Env):
             self.current_item_index += 1
         else:
             self.buffer.append((0, 0, 0))
+
+        self.action_mask = self.generate_action_mask()
 
         # Check if all items are placed
         if all(item == (0, 0, 0) for item in self.buffer):
@@ -266,10 +272,10 @@ class BinPacking3DEnv(gym.Env):
         """
         print("\n-----------------------------------")
         print("\nCurrent height map:")
-        for y in reversed(range(self.height_map.shape[1])):
+        for x in range(self.W):
             row = ""
-            for x in range(self.height_map.shape[0]):
-                row += f"{self.height_map[x][y]:2} "
+            for y in range(self.L):
+                row += f"{self.height_map[x][y]} "
             print(row)
         self.ems_manager.print_ems_list()
         print("\nBuffer:")
@@ -281,7 +287,7 @@ class BinPacking3DEnv(gym.Env):
 
         if verbose:
             # Show action mask
-            print(f'Action mask shape: {self.action_mask.shape}')
+            print(f'\nAction mask shape: {self.action_mask.shape}')
             for idx, item in enumerate(self.buffer):
                 print(f'Action mask for item {self.buffer[idx]}:')
                 for rot in range(self.num_rotations):

@@ -1,4 +1,7 @@
-from env.env import BinPacking3DEnv
+import os
+import sys
+
+from env import BinPacking3DEnv
 
 if __name__ == "__main__":
     # Define bin size and items
@@ -14,7 +17,6 @@ if __name__ == "__main__":
     )
 
     # Reset environment
-    observation = env.reset()
     env.render()
 
     # Define actions
@@ -27,27 +29,28 @@ if __name__ == "__main__":
     env.render(verbose=True)
     print(f"Reward: {reward}, Done: {done}, Info: {info}")
 
-    # Place first item of the buffer at (2, 0) with rotation 1
-    action2 = (2, 0, 1, 0)
-    observation, reward, done, truncated, info = env.step(action2)
-    print("\nAfter placing second box:")
-    env.render()
-    print(f"Reward: {reward}, Done: {done}, Info: {info}")
+    if 11 < 3:
+        # Place first item of the buffer at (2, 0) with rotation 1
+        action2 = (2, 0, 1, 0)
+        observation, reward, done, truncated, info = env.step(action2)
+        print("\nAfter placing second box:")
+        env.render()
+        print(f"Reward: {reward}, Done: {done}, Info: {info}")
 
-    # Place first item of the buffer at (3, 3) with rotation 0
-    action3 = (3, 3, 0, 0)
-    observation, reward, done, truncated, info = env.step(action3)
-    print("\nAfter placing third box:")
-    env.render()
-    print(f"Reward: {reward}, Done: {done}, Info: {info}")
+        # Place first item of the buffer at (3, 3) with rotation 0
+        action3 = (3, 3, 0, 0)
+        observation, reward, done, truncated, info = env.step(action3)
+        print("\nAfter placing third box:")
+        env.render()
+        print(f"Reward: {reward}, Done: {done}, Info: {info}")
 
-    # Place first item of the buffer at (0, 0) with rotation 1
-    action4 = (0, 0, 1, 0)
-    observation, reward, done, truncated, info = env.step(action4)
-    print("\nAfter placing fourth box:")
-    env.render()
-    print(f"Reward: {reward}, Done: {done}, Info: {info}")
+        # Place first item of the buffer at (0, 0) with rotation 1
+        action4 = (0, 0, 1, 0)
+        observation, reward, done, truncated, info = env.step(action4)
+        print("\nAfter placing fourth box:")
+        env.render()
+        print(f"Reward: {reward}, Done: {done}, Info: {info}")
 
-    env.visualize()
+        env.visualize()
 
     env.close()

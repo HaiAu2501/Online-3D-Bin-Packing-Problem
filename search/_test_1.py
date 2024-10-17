@@ -15,13 +15,13 @@ from models.value_net import ValueNetwork
 from replay_buffer import PrioritizedReplayBuffer
 from env.env import BinPacking3DEnv
 
-def test_mcts_integration():
+def test():
     # Thiết lập thông số
     bin_size = (10, 10, 10)  # W, L, H
     items = [
         (2, 2, 2),
         (3, 3, 3),
-        (1, 4, 2),
+        (1, 3, 3),
         (2, 1, 3),
         (3, 2, 1)
     ]
@@ -95,4 +95,4 @@ def test_mcts_integration():
         print(sample_rewards[0])  # In reward value
 
 if __name__ == "__main__":
-    test_mcts_integration()
+    test()
