@@ -1,21 +1,15 @@
-# transformer_block.py
+# block.py
 
-import torch
 import torch.nn as nn
 from torch import Tensor
 from typing import Tuple
-import logging
-
-# Thiết lập logging để xem các dòng debug
-logging.basicConfig(level=logging.DEBUG)
-logger = logging.getLogger(__name__)
 
 class TransformerBlock(nn.Module):
     def __init__(
         self, 
         d_model: int, 
         nhead: int, 
-        dim_feedforward: int = 512, 
+        dim_feedforward: int = 256, 
         dropout: float = 0.1
     ):
         """
@@ -87,28 +81,32 @@ class TransformerBlock(nn.Module):
         ems: Tensor, 
         items: Tensor, 
         ems_mask: Tensor = None, 
-        items_mask: Tensor = None
     ) -> Tuple[Tensor, Tensor]:
         """
-        Forward pass cho khối Transformer.
-        
-        Args:
-            ems (Tensor): EMS embeddings với kích thước [seq_len_ems, batch_size, d_model]
-            items (Tensor): Item embeddings với kích thước [seq_len_item, batch_size, d_model]
-            ems_mask (Tensor, optional): Mask cho EMS embeddings (True cho các phần thực)
-            items_mask (Tensor, optional): Mask cho Item embeddings (True cho các phần thực)
-        
-        Returns:
-            Tuple[Tensor, Tensor]: Cập nhật EMS và Item embeddings
+        Forward pass for the Transformer Block.
+
+        :param ems: EMS embeddings with shape [seq_len_ems, batch_size, d_model]
+        :param items: Item embeddings with shape [seq_len_item, batch_size, d_model]
+        :param ems_mask: Mask for EMS embeddings (True for real parts)
+
+        :return: Tuple of updated EMS and Item embeddings
         """
-        
         # --- Self-Attention cho EMS ---
-        ems_self_attn_output, _ = self.self_attn_ems(ems, ems, ems, key_padding_mask=~ems_mask if ems_mask is not None else None)
+        ems_self_attn_output, _ = self.self_attn_ems(
+            ems, 
+            ems, 
+            ems,
+            key_padding_mask=~ems_mask if ems_mask is not None else None
+        )
         ems = ems + self.dropout(ems_self_attn_output)  # Skip connection
         ems = self.norm1_ems(ems)
         
         # --- Self-Attention cho Item ---
-        items_self_attn_output, _ = self.self_attn_item(items, items, items, key_padding_mask=~items_mask if items_mask is not None else None)
+        items_self_attn_output, _ = self.self_attn_item(
+            items, 
+            items, 
+            items, 
+        )
         items = items + self.dropout(items_self_attn_output)  # Skip connection
         items = self.norm1_item(items)
         
@@ -127,7 +125,6 @@ class TransformerBlock(nn.Module):
             ems,       # Query
             items,     # Key
             items,     # Value
-            key_padding_mask=~items_mask if items_mask is not None else None
         )
         ems = ems + self.dropout(ems_cross_attn_output)  # Skip connection
         ems = self.norm3_ems(ems)

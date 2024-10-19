@@ -107,6 +107,13 @@ class Node:
         # Create a new child node with the resulting state
         child_node = Node(state=new_state, parent=self, action=action)
         child_node.is_terminal = done or truncated  # Mark as terminal if done or truncated
+
+        # Khởi tạo visits bằng 1 để tránh chia cho 0
+        child_node.visits = 1
+
+        # Khởi tạo giá trị dựa trên reward ngay lập tức hoặc 0 nếu không
+        child_node.value = 0.0  # Hoặc có thể khởi tạo dựa trên reward nếu có thông tin
+
         self.children[action] = child_node
         return child_node
 

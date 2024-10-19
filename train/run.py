@@ -22,18 +22,18 @@ def read_data(file_path):
     return bin_size, items
 
 def main():
-    # Khởi tạo môi trường
-    bin_size, items = read_data("F:\\.GITHUB\\src\\boxes.dat")
+    # Environment initialization
+    bin_size, items = read_data("boxes.dat")
 
     env = BinPacking3DEnv(bin_size=bin_size, items=items)
 
-    # Khởi tạo mô hình
+    # Models initialization
     transformer = BinPackingTransformer(
         d_model=128, 
         nhead=8, 
         num_layers=3, 
         dim_feedforward=256, 
-        max_ems=env.W * env.L
+        max_ems=100
     )
     
     policy_net = PolicyNetwork(
@@ -50,17 +50,17 @@ def main():
         hidden_dim=256
     )
 
-    # Khởi tạo Prioritized Replay Buffer
-    prb = PrioritizedReplayBuffer(capacity=1000, alpha=0.6)
+    # Prioritized Replay Buffer initialization
+    prb = PrioritizedReplayBuffer(capacity=10000, alpha=0.6)
 
-    # Khởi tạo Trainer
+    # Trainer initialization
     trainer = Trainer(
         env=env,
         transformer=transformer,
         policy_network=policy_net,
         value_network=value_net,
         replay_buffer=prb,
-        num_simulations=10,
+        num_simulations=100,
         batch_size=64,
         gamma=0.99,
         lr_policy=1e-4,
@@ -71,8 +71,8 @@ def main():
         verbose=True
     )
 
-    # Bắt đầu quá trình huấn luyện
-    trainer.train(num_episodes=100, update_every=2)
+    # Train the model
+    trainer.train(num_episodes=1000, update_every=1)
 
 if __name__ == "__main__":
     main()

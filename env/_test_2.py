@@ -1,6 +1,8 @@
 import os
 import sys
 
+sys.path.append(os.getcwd())
+
 from env import BinPacking3DEnv
 
 if __name__ == "__main__":

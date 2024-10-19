@@ -5,6 +5,8 @@ import torch.nn as nn
 import torch.optim as optim
 import numpy as np
 from typing import Tuple, List, Optional, Dict
+import matplotlib.pyplot as plt
+
 from env.env import BinPacking3DEnv
 from search.replay_buffer import PrioritizedReplayBuffer
 from search.node import Node
@@ -51,10 +53,10 @@ class Trainer:
         """
         self.env = env
 
-        # Xác định thiết bị: GPU nếu có, ngược lại CPU
+        # Choose device (GPU if available, else CPU)
         self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-        # Đưa Transformer và các mạng sang thiết bị đúng
+        # Move models to device
         self.transformer = transformer.to(self.device)
         self.policy_network = policy_network.to(self.device)
         self.value_network = value_network.to(self.device)
@@ -75,6 +77,12 @@ class Trainer:
 
         # Create directory to save models if it doesn't exist
         os.makedirs(self.save_path, exist_ok=True)
+
+        self.policy_losses = []
+        self.value_losses = []
+        self.total_losses = []
+
+        self.best_episode_rewards = []
 
     def train(self, num_episodes: int = 10000, update_every: int = 10):
         """
@@ -101,37 +109,55 @@ class Trainer:
             # Collect experiences from the MCTS tree
             experiences = self._collect_experiences(mcts.root)
 
+            # Tính tổng reward cho episode hiện tại bằng cách chỉ cộng các reward từ các hành động thực sự
+            best_reward = max(mcts.total_reward)
+            print(f"Episode {episode} - Best Reward: {best_reward}")
+
             # Add experiences to the replay buffer
             for exp in experiences:
-                state, action, reward, next_state, done = exp
+                state, action_index, reward, next_state, done = exp
                 priority = reward  # You can adjust priority based on reward or another metric
                 self.replay_buffer.add(exp, priority)
 
             # Update networks every 'update_every' episodes
             if episode % update_every == 0:
                 self._update_networks()
-                print(f"Episode {episode}/{num_episodes} - Networks updated.")
+                if self.verbose:
+                    print(f"Episode {episode}/{num_episodes} - Networks updated.")
 
             # Save models periodically
             if episode % 1000 == 0:
                 self._save_models(episode)
-                print(f"Episode {episode}/{num_episodes} - Models saved.")
+                if self.verbose:
+                    print(f"Episode {episode}/{num_episodes} - Models saved.")
+
+        # Sau khi huấn luyện xong, vẽ đồ thị loss và reward
+        self.plot_losses(save_fig=True, fig_path="training_losses.png")
+        self.plot_rewards(save_fig=True, fig_path="training_rewards.png")
+        if self.verbose:
+            print("Training completed. Loss and Reward plots saved.")
 
     def _collect_experiences(self, node: Node, parent_state: Optional[BinPacking3DEnv] = None) -> List[Tuple]:
         """
-        Traverse the MCTS tree and collect experiences.
-
-        :param node: The current node in the MCTS tree.
-        :param parent_state: The state before taking the action.
-        :return: A list of experiences.
+        Traverse the MCTS tree và thu thập các trải nghiệm, lưu trữ hành động dưới dạng chỉ số duy nhất.
         """
         experiences = []
         if node.parent is not None and parent_state is not None:
-            # Current state is the state after taking node.action from parent_state
+            # Clone state từ parent_state và thực hiện hành động
             state = parent_state.clone()
             _, reward, done, _, _ = state.step(node.action)
             next_state = state.clone()
-            experiences.append((parent_state._get_observation(), node.action, reward, next_state._get_observation(), done))
+
+            L = state.L
+            num_rotations = state.num_rotations
+            buffer_size = state.buffer_size
+            total_rot_buffer = num_rotations * buffer_size
+
+            x, y, rotation, item_index = node.action
+            action_index = x * (L * total_rot_buffer) + y * total_rot_buffer + rotation * buffer_size + item_index
+
+            # Sử dụng phần thưởng thực tế làm reward
+            experiences.append((parent_state._get_observation(), action_index, reward, next_state._get_observation(), done))
 
         for child in node.children.values():
             experiences.extend(self._collect_experiences(child, node.state))
@@ -173,20 +199,22 @@ class Trainer:
         buffer_next_states = torch.cat([s['buffer'] for s in next_state_inputs], dim=0).to(self.transformer.device)  # [batch_size, buffer_size, 3]
         ems_next_states = torch.cat([s['ems'] for s in next_state_inputs], dim=0).to(self.transformer.device)        # [batch_size, max_ems, 6]
         ems_next_masks = torch.cat([s['ems_mask'] for s in next_state_inputs], dim=0).to(self.transformer.device)    # [batch_size, max_ems]
-        # Assuming you have action_masks for next_states if needed
 
-        actions = torch.tensor(actions, dtype=torch.long).to(self.transformer.device)         # [batch_size]
+        actions = torch.tensor(actions, dtype=torch.long).to(self.transformer.device)        # [batch_size]
         rewards = torch.tensor(rewards, dtype=torch.float32).to(self.transformer.device)     # [batch_size]
         dones = torch.tensor(dones, dtype=torch.float32).to(self.transformer.device)         # [batch_size]
         weights = torch.tensor(weights, dtype=torch.float32).to(self.transformer.device)     # [batch_size]
 
         # -------------------- Train Policy Network --------------------
+        self.transformer.train()
+        self.policy_network.train()
+        self.value_network.train()
+
         # Pass through transformer to get features
         ems_features, item_features = self.transformer(
             ems_states,
             buffer_states,
-            ems_mask=ems_masks,
-            buffer_mask=None  # Or create buffer_mask if needed
+            ems_mask=ems_masks, # Or create buffer_mask if needed
         )
 
         # Pass through Policy Network
@@ -198,12 +226,6 @@ class Trainer:
         # Compute policy loss (negative log likelihood)
         policy_loss = -log_probs * weights
 
-        # Optimize Policy Network
-        self.optimizer_policy.zero_grad()
-        policy_loss.mean().backward()
-        self.optimizer_policy.step()
-
-        # -------------------- Train Value Network --------------------
         # Predict state values
         state_values = self.value_network(ems_features, item_features).squeeze(1)  # [batch_size]
 
@@ -212,7 +234,6 @@ class Trainer:
             ems_next_states,
             buffer_next_states,
             ems_mask=ems_next_masks,
-            buffer_mask=None
         )
 
         # Predict next state values
@@ -223,11 +244,20 @@ class Trainer:
 
         # Compute value loss (mean squared error)
         value_loss = (state_values - targets) ** 2 * weights
-        value_loss = value_loss.mean()
 
-        # Optimize Value Network
+        # Tính tổng loss
+        total_loss = policy_loss.mean() + value_loss.mean()  # [scalar]
+
+        # Ghi lại các giá trị loss
+        self.policy_losses.append(policy_loss.mean().item())
+        self.value_losses.append(value_loss.mean().item())
+        self.total_losses.append(total_loss.item())
+ 
+        # Optimize cả Policy Network và Value Network
+        self.optimizer_policy.zero_grad()
         self.optimizer_value.zero_grad()
-        value_loss.backward()
+        total_loss.backward()
+        self.optimizer_policy.step()
         self.optimizer_value.step()
 
         # -------------------- Update Priorities in Replay Buffer --------------------
@@ -295,3 +325,49 @@ class Trainer:
         self.policy_network.load_state_dict(torch.load(policy_path, map_location=self.device))
         self.value_network.load_state_dict(torch.load(value_path, map_location=self.device))
         self.transformer.load_state_dict(torch.load(transformer_path, map_location=self.device))
+
+    def plot_losses(self, save_fig: bool = False, fig_path: str = "loss_plot.png"):
+        """
+        Vẽ đồ thị tổng loss (policy_loss, value_loss, total_loss).
+
+        :param save_fig: Nếu True, lưu đồ thị vào file.
+        :param fig_path: Đường dẫn file để lưu đồ thị nếu save_fig là True.
+        """
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.policy_losses, label='Policy Loss')
+        plt.plot(self.value_losses, label='Value Loss')
+        plt.plot(self.total_losses, label='Total Loss')
+        plt.xlabel('Updates')
+        plt.ylabel('Loss')
+        plt.title('Training Losses Over Time')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+        
+        if save_fig:
+            plt.savefig(fig_path)
+            print(f"Loss plot saved to {fig_path}")
+        else:
+            plt.show()
+
+    def plot_rewards(self, save_fig: bool = False, fig_path: str = "reward_plot.png"):
+        """
+        Vẽ đồ thị tổng reward qua các episode.
+
+        :param save_fig: Nếu True, lưu đồ thị vào file.
+        :param fig_path: Đường dẫn file để lưu đồ thị nếu save_fig là True.
+        """
+        plt.figure(figsize=(10, 6))
+        plt.plot(self.episode_rewards, label='Total Reward per Episode')
+        plt.xlabel('Episode')
+        plt.ylabel('Total Reward')
+        plt.title('Total Reward Over Episodes')
+        plt.legend()
+        plt.grid(True)
+        plt.tight_layout()
+
+        if save_fig:
+            plt.savefig(fig_path)
+            print(f"Reward plot saved to {fig_path}")
+        else:
+            plt.show()

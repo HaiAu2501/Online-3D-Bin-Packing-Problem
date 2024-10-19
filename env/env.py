@@ -82,7 +82,6 @@ class BinPacking3DEnv(gym.Env):
         - A list of empty maximal spaces (EMSs) in the bin.
         - Each EMS is a vector of 6 integers: left-back-bottom corner and right-front-top corner. 
         """
-        self.max_ems = self.W * self.L * self.H
         self.observation_space = spaces.Dict({
             'buffer': spaces.Box(
                 low=0,
@@ -185,7 +184,7 @@ class BinPacking3DEnv(gym.Env):
         # Check if all items are placed
         if all(item == (0, 0, 0) for item in self.buffer):
             done = True
-            reward += 100.0
+            reward += 50.0
             info['sucess'] = True
 
         return self._get_observation(), reward, done, truncated, info
