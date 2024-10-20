@@ -3,7 +3,7 @@ import sys
 
 sys.path.append(os.getcwd())
 
-from env import BinPacking3DEnv
+from env.env import BinPacking3DEnv
 
 if __name__ == "__main__":
     # Define bin size and items

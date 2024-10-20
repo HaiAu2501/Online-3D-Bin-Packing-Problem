@@ -1,5 +1,11 @@
+
+import os
+import sys
 import numpy as np
-from ems import EMSManager
+
+sys.path.append(os.getcwd())
+
+from env.ems import EMSManager
 
 class Box:
     """
@@ -38,12 +44,10 @@ def print_height_map(height_map: np.ndarray):
     :param height_map: 2D numpy array representing the height map.
     """
     print("\nCurrent Height Map (Z-values):")
-    # Print Y from top to bottom to match the coordinate system
-    for y in reversed(range(height_map.shape[1])):
-        row = ""
-        for x in range(height_map.shape[0]):
-            row += f"{height_map[x][y]:2} "
-        print(row)
+    for x in range(height_map.shape[0]):
+        for y in range(height_map.shape[1]):
+            print(height_map[x][y], end=" ")
+        print()
 
 def get_user_input():
     """

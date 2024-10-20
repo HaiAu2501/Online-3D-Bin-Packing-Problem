@@ -20,7 +20,7 @@ class EMSEmbedding(nn.Module):
             Tensor: [num_ems, batch_size, d_model]
         """
         embedded = self.linear(ems_list)  # [batch_size, num_ems, d_model]
-        embedded = embedded.transpose(0, 1)  # [num_ems, batch_size, d_model]
+        embedded = embedded.transpose(0, 1)  # [max_ems, batch_size, d_model]
         return embedded
 
 class BufferEmbedding(nn.Module):

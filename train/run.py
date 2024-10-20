@@ -64,7 +64,7 @@ def main():
         batch_size=64,
         gamma=0.99,
         lr_policy=1e-4,
-        lr_value=1e-3,
+        lr_value=1e-4,
         beta_start=0.4,
         beta_frames=100000,
         save_path="./models/",
@@ -72,7 +72,7 @@ def main():
     )
 
     # Train the model
-    trainer.train(num_episodes=1000, update_every=1)
+    trainer.train(num_episodes=100, update_every=1)
 
 if __name__ == "__main__":
     main()
