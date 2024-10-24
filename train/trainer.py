@@ -84,52 +84,47 @@ class Trainer:
 
         self.best_episode_rewards = []
 
-    def train(self, num_episodes: int = 10000, update_every: int = 10):
+    def train(self, update_every: int = 10):
         """
         Train the Policy and Value networks using MCTS and PRB.
 
-        :param num_episodes: Number of training episodes.
-        :param update_every: Number of episodes between each network update.
+        :param update_every: Number of simulations after which to update the networks.
         """
-        for episode in range(1, num_episodes + 1):
+        self.env.reset()
+        mcts = MCTS(
+            env=self.env,
+            transformer=self.transformer,
+            policy_network=self.policy_network,
+            value_network=self.value_network,
+            num_simulations=self.num_simulations
+        )
+
+        # Perform MCTS search to generate data
+        mcts.search()
+
+        # Collect experiences from the MCTS tree
+        experiences = self._collect_experiences(mcts.root)
+
+        # Tính tổng reward cho episode hiện tại bằng cách chỉ cộng các reward từ các hành động thực sự
+        print(f"Episode {episode} - Best Reward: {best_reward}")
+
+        # Add experiences to the replay buffer
+        for exp in experiences:
+            state, action_index, reward, next_state, done = exp
+            priority = reward  # You can adjust priority based on reward or another metric
+            self.replay_buffer.add(exp, priority)
+
+        # Update networks every 'update_every' episodes
+        if episode % update_every == 0:
+            self._update_networks()
             if self.verbose:
-                print(f"Episode {episode}/{num_episodes} - Starting episode.")
-            self.env.reset()
-            mcts = MCTS(
-                env=self.env,
-                transformer=self.transformer,
-                policy_network=self.policy_network,
-                value_network=self.value_network,
-                num_simulations=self.num_simulations
-            )
+                print(f"Episode {episode}/{num_episodes} - Networks updated.")
 
-            # Perform MCTS search to generate data
-            mcts.search()
-
-            # Collect experiences from the MCTS tree
-            experiences = self._collect_experiences(mcts.root)
-
-            # Tính tổng reward cho episode hiện tại bằng cách chỉ cộng các reward từ các hành động thực sự
-            best_reward = max(mcts.total_reward)
-            print(f"Episode {episode} - Best Reward: {best_reward}")
-
-            # Add experiences to the replay buffer
-            for exp in experiences:
-                state, action_index, reward, next_state, done = exp
-                priority = reward  # You can adjust priority based on reward or another metric
-                self.replay_buffer.add(exp, priority)
-
-            # Update networks every 'update_every' episodes
-            if episode % update_every == 0:
-                self._update_networks()
-                if self.verbose:
-                    print(f"Episode {episode}/{num_episodes} - Networks updated.")
-
-            # Save models periodically
-            if episode % 1000 == 0:
-                self._save_models(episode)
-                if self.verbose:
-                    print(f"Episode {episode}/{num_episodes} - Models saved.")
+        # Save models periodically
+        if episode % 1000 == 0:
+            self._save_models(episode)
+            if self.verbose:
+                print(f"Episode {episode}/{num_episodes} - Models saved.")
 
         # Sau khi huấn luyện xong, vẽ đồ thị loss và reward
         self.plot_losses(save_fig=True, fig_path="training_losses.png")

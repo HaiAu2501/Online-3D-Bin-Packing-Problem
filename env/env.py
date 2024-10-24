@@ -40,25 +40,9 @@ class BinPacking3DEnv(gym.Env):
 
         if self.num_rotations < 1 or self.num_rotations > 6:
             raise ValueError("The number of rotations must be between 1 and 6.")
-
-        self.current_item_index: int = 0
-        self.height_map: np.ndarray = np.zeros((self.W, self.L), dtype=np.int32)
-        self.placed_items: List[Dict] = [] # To store placed items' positions and rotations
-
+            
         # Intialize EMSManager
         self.ems_manager = EMSManager(bin_size=bin_size)
-
-        # Initialize the buffer with k items
-        self.buffer: List[Tuple[int, int, int]] = []
-        for i in range(self.buffer_size):
-            if i < len(self.items):
-                self.buffer.append(self.items[i])
-                self.current_item_index += 1
-            else:
-                self.buffer.append((0, 0, 0))
-
-        # Initialize the action mask
-        self.action_mask = self.generate_action_mask()
         
         """
         Define action space:
@@ -95,6 +79,18 @@ class BinPacking3DEnv(gym.Env):
                 shape=(self.max_ems, 6),
                 dtype=np.int32
             ),
+            'ems_mask': spaces.Box(
+                low=0,
+                high=1,
+                shape=(self.max_ems,),
+                dtype=np.int8
+            ),
+            'action_mask': spaces.Box(
+                low=0,
+                high=1,
+                shape=(self.W, self.L, self.num_rotations, self.buffer_size),
+                dtype=np.int8
+            ),
         })
         
     def reset(self):
@@ -102,11 +98,11 @@ class BinPacking3DEnv(gym.Env):
         Reset the environment to the initial state.
         """
         self.current_item_index = 0
-        self.height_map = np.zeros((self.W, self.L), dtype=int)
+        self.height_map = np.zeros((self.W, self.L), dtype=np.int32)
         self.placed_items = []
         
         # Reset EMSManager
-        self.ems_manager = EMSManager(bin_size=(self.W, self.L, self.H))
+        self.ems_manager.reset()
 
         # Reset the buffer with k items
         self.buffer = []
@@ -116,6 +112,10 @@ class BinPacking3DEnv(gym.Env):
                 self.current_item_index += 1
             else:
                 self.buffer.append((0, 0, 0))
+
+        self.action_mask = self.generate_action_mask()
+
+        return self._get_observation()
     
     def step(self, action: Optional[Tuple[int, int, int, int]]) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict]:
         """
@@ -139,8 +139,7 @@ class BinPacking3DEnv(gym.Env):
         reward = 0.0
 
         if action is None:
-            done = True
-            info['terminated'] = True
+            truncated = True
             return self._get_observation(), reward, done, truncated, info
 
         # Unpack the action
@@ -179,8 +178,6 @@ class BinPacking3DEnv(gym.Env):
         else:
             self.buffer.append((0, 0, 0))
 
-        self.action_mask = self.generate_action_mask()
-
         # Check if all items are placed
         if all(item == (0, 0, 0) for item in self.buffer):
             done = True
@@ -201,10 +198,16 @@ class BinPacking3DEnv(gym.Env):
             ems_array = np.concatenate([ems_array, padding], axis=0)
         else:
             ems_array = ems_array[:self.max_ems]
+
+        # Create an ems mask
+        ems_mask = [0] * self.max_ems + [1] * (self.max_ems - current_num_ems)
+        ems_mask = np.array(ems_mask, dtype=np.int8)
         
         return {
             'buffer': np.array(self.buffer, dtype=np.int32),
-            'ems': ems_array
+            'ems': ems_array,
+            'ems_mask': ems_mask,
+            'action_mask': self.generate_action_mask(),
         }
         
     def _get_rotated_item(self, item: Tuple[int, int, int], rotation: int) -> Tuple[int, int, int]:
@@ -393,12 +396,6 @@ class BinPacking3DEnv(gym.Env):
         plt.title('3D Bin Packing Visualization')
         plt.show()
 
-    def close(self):
-        """
-        Close the environment.
-        """
-        pass
-
     def clone(self) -> 'BinPacking3DEnv':
         """
         Clone the environment.
@@ -416,3 +413,9 @@ class BinPacking3DEnv(gym.Env):
         cloned_env.ems_manager = self.ems_manager.clone()
 
         return cloned_env
+
+    def close(self):
+        """
+        Close the environment and release resources.
+        """
+        pass    

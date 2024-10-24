@@ -60,7 +60,7 @@ def main():
         policy_network=policy_net,
         value_network=value_net,
         replay_buffer=prb,
-        num_simulations=100,
+        num_simulations=1000,
         batch_size=64,
         gamma=0.99,
         lr_policy=1e-4,

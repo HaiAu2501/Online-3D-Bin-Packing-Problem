@@ -17,6 +17,12 @@ class EMSManager:
         # Each EMS is represented as (x_min, y_min, z_min, x_max, y_max, z_max)
         self.ems_list = [(0, 0, 0, self.W, self.L, self.H)]
 
+    def reset(self):
+        """
+        Reset the EMSManager to the initial state.
+        """
+        self.ems_list = [(0, 0, 0, self.W, self.L, self.H)]
+
     def find_containing_ems(self, box: Tuple[int, int, int, int, int, int]) -> Tuple[int, int, int, int, int, int]:
         """
         Find the EMS that fully contains the given box.
