@@ -78,7 +78,7 @@ class BinPackingTransformer(nn.Module):
             ems_list_embedded, buffer_embedded = block(
                 ems_list_embedded, 
                 buffer_embedded,
-                ems_mask=~ems_mask,  # Đảo ngược mask cho PyTorch (True cho padding)
+                ems_mask=ems_mask, # True for padding
             )
         
         # NOTE: Mean pooling for the entire sequence of EMS list and buffer can be replaced by other methods.

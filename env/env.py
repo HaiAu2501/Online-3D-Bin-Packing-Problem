@@ -208,8 +208,8 @@ class BinPacking3DEnv(gym.Env):
         else:
             ems_array = ems_array[:self.max_ems]
 
-        # Create an ems mask
-        ems_mask = [0] * self.max_ems + [1] * (self.max_ems - current_num_ems)
+        # Create an ems mask: 0 for valid EMSs and 1 for padding
+        ems_mask = [0] * current_num_ems + [1] * (self.max_ems - current_num_ems)
         ems_mask = np.array(ems_mask, dtype=np.int8)
 
         self.action_mask = self.generate_action_mask()
