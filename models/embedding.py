@@ -1,46 +1,29 @@
 import torch.nn as nn
 from torch import Tensor
 
-class EMSEmbedding(nn.Module):
-    def __init__(self, input_dim: int = 6, d_model: int = 128):
+class Embedding(nn.Module):
+    def __init__(self, d_input: int, d_model: int):
         """
-        Embedding cho danh sách EMS.
-        """
-        super(EMSEmbedding, self).__init__()
-        self.linear = nn.Linear(input_dim, d_model)
-    
-    def forward(self, ems_list: Tensor) -> Tensor:
-        """
-        Chuyển đổi EMS list thành embeddings.
+        Embedding for buffer or ems_list.
         
-        Args:
-            ems_list (Tensor): [batch_size, num_ems, 6]
-        
-        Returns:
-            Tensor: [num_ems, batch_size, d_model]
-        """
-        embedded = self.linear(ems_list)  # [batch_size, num_ems, d_model]
-        embedded = embedded.transpose(0, 1)  # [max_ems, batch_size, d_model]
-        return embedded
+        :param d_input: input dimension
+        :param d_model: model dimension
 
-class BufferEmbedding(nn.Module):
-    def __init__(self, input_dim: int = 3, d_model: int = 128):
+        - For buffer: d_input = 3
+        - For ems_list: d_input = 6
         """
-        Embedding cho danh sách Item trong buffer.
+        super(Embedding, self).__init__()
+        self.linear = nn.Linear(d_input, d_model)
+
+    def forward(self, x: Tensor) -> Tensor:
         """
-        super(BufferEmbedding, self).__init__()
-        self.linear = nn.Linear(input_dim, d_model)
-    
-    def forward(self, buffer_list: Tensor) -> Tensor:
-        """
-        Chuyển đổi buffer list thành embeddings.
+        Forward pass of the embedding layer.
         
-        Args:
-            buffer_list (Tensor): [batch_size, num_items, 3]
-        
-        Returns:
-            Tensor: [num_items, batch_size, d_model]
+        :param x: input tensor [batch_size, buffer_size, 3] or [batch_size, max_ems, 6]
+        :return: embedded tensor [buffer_size, batch_size, d_model] or [max_ems, batch_size, d_model]
         """
-        embedded = self.linear(buffer_list)  # [batch_size, num_items, d_model]
-        embedded = embedded.transpose(0, 1)  # [num_items, batch_size, d_model]
+        embedded = self.linear(x)  # [batch_size, buffer_size, d_model] or [batch_size, max_ems, d_model]
+        embedded = embedded.transpose(0, 1)  # [buffer_size, batch_size, d_model] or [max_ems, batch_size, d_model]
+
+        # NOTE: Transpose the batch_size to the second dimension to fit the Transformer architecture.
         return embedded

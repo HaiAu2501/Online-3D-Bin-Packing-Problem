@@ -8,145 +8,130 @@ class TransformerBlock(nn.Module):
     def __init__(
         self, 
         d_model: int, 
-        nhead: int, 
-        dim_feedforward: int = 256, 
+        n_head: int, 
+        d_feedforward: int = 256, 
         dropout: float = 0.1
     ):
         """
-        Khối Transformer thực hiện:
-        - Self-Attention cho EMS và Item embeddings
-        - Add & Norm
-        - MLP cho EMS và Item embeddings
-        - Add & Norm
-        - Cross-Attention giữa EMS và Item embeddings
-        - Add & Norm
-        - MLP cuối cùng
-        - Add & Norm
+        Architecture of a single Transformer Block in the Bin Packing Transformer.
+
+        :param d_model: Dimension of the input embeddings
+        :param n_head: Number of attention heads
+        :param d_feedforward: Dimension of the feedforward network
+        :param dropout: Dropout rate
+
+        Layers:
+        1: Self-Attention for 'ems_list' and 'buffer' embeddings
+        2: Add & Norm
+        3: MLP for 'ems_list' and 'buffer' embeddings
+        4: Add & Norm
+        5: Cross-Attention between 'ems_list' and 'buffer' embeddings
+        6: Add & Norm
+        7: Final MLP
+        8: Add & Norm
         """
         super(TransformerBlock, self).__init__()
         
-        # Self-Attention cho EMS và Item embeddings
-        self.self_attn_ems = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.self_attn_item = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
+        # Self-Attention for 'ems_list' and 'buffer' embeddings
+        self.self_attn_ems_list = nn.MultiheadAttention(d_model, n_head, dropout=dropout)
+        self.self_attn_buffer = nn.MultiheadAttention(d_model, n_head, dropout=dropout)
         
-        # Layer Normalization sau Self-Attention
-        self.norm1_ems = nn.LayerNorm(d_model)
-        self.norm1_item = nn.LayerNorm(d_model)
+        # Layer Normalization
+        self.norm1_ems_list = nn.LayerNorm(d_model)
+        self.norm1_buffer = nn.LayerNorm(d_model)
         
-        # MLP cho EMS và Item
-        self.mlp_ems = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
+        # MLP for 'ems_list' and 'buffer' embeddings
+        self.mlp_ems_list = nn.Sequential(
+            nn.Linear(d_model, d_feedforward),
             nn.ReLU(),
-            nn.Linear(dim_feedforward, d_model)
+            nn.Linear(d_feedforward, d_model)
         )
-        self.mlp_item = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
+        self.mlp_buffer = nn.Sequential(
+            nn.Linear(d_model, d_feedforward),
             nn.ReLU(),
-            nn.Linear(dim_feedforward, d_model)
-        )
-        
-        # Layer Normalization sau MLP
-        self.norm2_ems = nn.LayerNorm(d_model)
-        self.norm2_item = nn.LayerNorm(d_model)
-        
-        # Cross-Attention: EMS attends to Items và ngược lại
-        self.cross_attn_ems = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        self.cross_attn_item = nn.MultiheadAttention(d_model, nhead, dropout=dropout)
-        
-        # Layer Normalization sau Cross-Attention
-        self.norm3_ems = nn.LayerNorm(d_model)
-        self.norm3_item = nn.LayerNorm(d_model)
-        
-        # MLP cuối cùng cho EMS và Item
-        self.mlp_final_ems = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
-            nn.ReLU(),
-            nn.Linear(dim_feedforward, d_model)
-        )
-        self.mlp_final_item = nn.Sequential(
-            nn.Linear(d_model, dim_feedforward),
-            nn.ReLU(),
-            nn.Linear(dim_feedforward, d_model)
+            nn.Linear(d_feedforward, d_model)
         )
         
-        # Layer Normalization cuối cùng
-        self.norm4_ems = nn.LayerNorm(d_model)
-        self.norm4_item = nn.LayerNorm(d_model)
+        # Layer Normalization
+        self.norm2_ems_list = nn.LayerNorm(d_model)
+        self.norm2_buffer = nn.LayerNorm(d_model)
+        
+        # Cross-Attention between 'ems_list' and 'buffer' embeddings
+        self.cross_attn_ems_list = nn.MultiheadAttention(d_model, n_head, dropout=dropout)
+        self.cross_attn_buffer = nn.MultiheadAttention(d_model, n_head, dropout=dropout)
+        
+        # Layer Normalization
+        self.norm3_ems_list = nn.LayerNorm(d_model)
+        self.norm3_buffer = nn.LayerNorm(d_model)
+        
+        # Final MLP
+        self.mlp_final_ems_list = nn.Sequential(
+            nn.Linear(d_model, d_feedforward),
+            nn.ReLU(),
+            nn.Linear(d_feedforward, d_model)
+        )
+        self.mlp_final_buffer = nn.Sequential(
+            nn.Linear(d_model, d_feedforward),
+            nn.ReLU(),
+            nn.Linear(d_feedforward, d_model)
+        )
+        
+        # Layer Normalization
+        self.norm4_ems_list = nn.LayerNorm(d_model)
+        self.norm4_buffer = nn.LayerNorm(d_model)
         
         # Dropout
         self.dropout = nn.Dropout(dropout)
         
     def forward(
         self, 
-        ems: Tensor, 
-        items: Tensor, 
+        ems_list: Tensor, 
+        buffer: Tensor, 
         ems_mask: Tensor = None, 
     ) -> Tuple[Tensor, Tensor]:
         """
         Forward pass for the Transformer Block.
 
-        :param ems: EMS embeddings with shape [seq_len_ems, batch_size, d_model]
-        :param items: Item embeddings with shape [seq_len_item, batch_size, d_model]
-        :param ems_mask: Mask for EMS embeddings (True for real parts)
+        :param ems_list: Tensor of EMS embeddings [max_ems, batch_size, d_model]
+        :param buffer: Tensor of buffer embeddings [buffer_size, batch_size, d_model]
+        :param ems_mask: Mask for padding in EMS embeddings
 
         :return: Tuple of updated EMS and Item embeddings
         """
         # --- Self-Attention cho EMS ---
-        ems_self_attn_output, _ = self.self_attn_ems(
-            ems, 
-            ems, 
-            ems,
-            key_padding_mask=~ems_mask if ems_mask is not None else None
-        )
-        ems = ems + self.dropout(ems_self_attn_output)  # Skip connection
-        ems = self.norm1_ems(ems)
-        
-        # --- Self-Attention cho Item ---
-        items_self_attn_output, _ = self.self_attn_item(
-            items, 
-            items, 
-            items, 
-        )
-        items = items + self.dropout(items_self_attn_output)  # Skip connection
-        items = self.norm1_item(items)
-        
-        # --- MLP cho EMS ---
-        ems_mlp_output = self.mlp_ems(ems)
-        ems = ems + self.dropout(ems_mlp_output)  # Skip connection
-        ems = self.norm2_ems(ems)
-        
-        # --- MLP cho Item ---
-        items_mlp_output = self.mlp_item(items)
-        items = items + self.dropout(items_mlp_output)  # Skip connection
-        items = self.norm2_item(items)
-        
-        # --- Cross-Attention: EMS attends to Items ---
-        ems_cross_attn_output, _ = self.cross_attn_ems(
-            ems,       # Query
-            items,     # Key
-            items,     # Value
-        )
-        ems = ems + self.dropout(ems_cross_attn_output)  # Skip connection
-        ems = self.norm3_ems(ems)
-        
-        # --- Cross-Attention: Items attends to EMS ---
-        items_cross_attn_output, _ = self.cross_attn_item(
-            items,      # Query
-            ems,        # Key
-            ems,        # Value
-            key_padding_mask=~ems_mask if ems_mask is not None else None
-        )
-        items = items + self.dropout(items_cross_attn_output)  # Skip connection
-        items = self.norm3_item(items)
-        
-        # --- MLP cuối cùng cho EMS ---
-        ems_final_mlp = self.mlp_final_ems(ems)
-        ems = ems + self.dropout(ems_final_mlp)  # Skip connection
-        ems = self.norm4_ems(ems)
-        
-        # --- MLP cuối cùng cho Item ---
-        items_final_mlp = self.mlp_final_item(items)
-        items = items + self.dropout(items_final_mlp)  # Skip connection
-        items = self.norm4_item(items)
+        ems_attn_output, _ = self.self_attn_ems_list(ems_list, ems_list, ems_list, key_padding_mask=ems_mask)
+        ems_list = ems_list + self.dropout(ems_attn_output)  # Residual connection
+        ems_list = self.norm1_ems_list(ems_list)  # Layer normalization
 
-        return ems, items
+        ems_mlp_output = self.mlp_ems_list(ems_list)
+        ems_list = ems_list + self.dropout(ems_mlp_output)  # Residual connection
+        ems_list = self.norm2_ems_list(ems_list)  # Layer normalization
+
+        # --- Self-Attention cho Buffer ---
+        buffer_attn_output, _ = self.self_attn_buffer(buffer, buffer, buffer)
+        buffer = buffer + self.dropout(buffer_attn_output)  # Residual connection
+        buffer = self.norm1_buffer(buffer)  # Layer normalization
+
+        buffer_mlp_output = self.mlp_buffer(buffer)
+        buffer = buffer + self.dropout(buffer_mlp_output)  # Residual connection
+        buffer = self.norm2_buffer(buffer)  # Layer normalization
+
+        # --- Cross-Attention giữa EMS và Buffer ---
+        cross_attn_ems_output, _ = self.cross_attn_ems_list(ems_list, buffer, buffer)
+        ems_list = ems_list + self.dropout(cross_attn_ems_output)  # Residual connection
+        ems_list = self.norm3_ems_list(ems_list)  # Layer normalization
+
+        cross_attn_buffer_output, _ = self.cross_attn_buffer(buffer, ems_list, ems_list)
+        buffer = buffer + self.dropout(cross_attn_buffer_output)  # Residual connection
+        buffer = self.norm3_buffer(buffer)  # Layer normalization
+
+        # --- Final MLP ---
+        ems_final_mlp = self.mlp_final_ems_list(ems_list)
+        ems_list = ems_list + self.dropout(ems_final_mlp)  # Residual connection
+        ems_list = self.norm4_ems_list(ems_list)  # Layer normalization
+
+        buffer_final_mlp = self.mlp_final_buffer(buffer)
+        buffer = buffer + self.dropout(buffer_final_mlp)  # Residual connection
+        buffer = self.norm4_buffer(buffer)  # Layer normalization
+
+        return ems_list, buffer

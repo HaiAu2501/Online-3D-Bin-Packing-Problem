@@ -40,7 +40,7 @@ class BinPacking3DEnv(gym.Env):
 
         if self.num_rotations < 1 or self.num_rotations > 6:
             raise ValueError("The number of rotations must be between 1 and 6.")
-            
+
         # Intialize EMSManager
         self.ems_manager = EMSManager(bin_size=bin_size)
         
@@ -64,7 +64,9 @@ class BinPacking3DEnv(gym.Env):
         Define observation space:
         - A buffer with k items, each item is a vector of 3 integers (width, length, height).
         - A list of empty maximal spaces (EMSs) in the bin.
-        - Each EMS is a vector of 6 integers: left-back-bottom corner and right-front-top corner. 
+          Each EMS is a vector of 6 integers: left-back-bottom corner and right-front-top corner. 
+        - A mask for the EMS list to indicate the valid EMSs.
+        - A mask for the action space to indicate the valid actions.
         """
         self.observation_space = spaces.Dict({
             'buffer': spaces.Box(
@@ -73,7 +75,7 @@ class BinPacking3DEnv(gym.Env):
                 shape=(self.buffer_size, 3), 
                 dtype=np.int32
             ),
-            'ems': spaces.Box(
+            'ems_list': spaces.Box(
                 low=0,
                 high=max(self.W, self.L, self.H),
                 shape=(self.max_ems, 6),
@@ -93,9 +95,9 @@ class BinPacking3DEnv(gym.Env):
             ),
         })
         
-    def reset(self):
+    def reset(self) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict]:
         """
-        Reset the environment to the initial state.
+        Reset the environment to the initial state or start a new episode.
         """
         self.current_item_index = 0
         self.height_map = np.zeros((self.W, self.L), dtype=np.int32)
@@ -104,7 +106,7 @@ class BinPacking3DEnv(gym.Env):
         # Reset EMSManager
         self.ems_manager.reset()
 
-        # Reset the buffer with k items
+        # Reset the buffer with buffer_size items
         self.buffer = []
         for i in range(self.buffer_size):
             if i < len(self.items):
@@ -112,8 +114,6 @@ class BinPacking3DEnv(gym.Env):
                 self.current_item_index += 1
             else:
                 self.buffer.append((0, 0, 0))
-
-        self.action_mask = self.generate_action_mask()
 
         return self._get_observation()
     
@@ -140,10 +140,14 @@ class BinPacking3DEnv(gym.Env):
 
         if action is None:
             truncated = True
+            info['continue'] = False
             return self._get_observation(), reward, done, truncated, info
 
         # Unpack the action
         x, y, rotation, item_index = action 
+
+        if self.action_mask[x, y, rotation, item_index] == 0:
+            raise ValueError(f"Invalid action: {action}")
 
         selected_item = self.buffer[item_index]
         rotated_item = self._get_rotated_item(selected_item, rotation)
@@ -182,7 +186,11 @@ class BinPacking3DEnv(gym.Env):
         if all(item == (0, 0, 0) for item in self.buffer):
             done = True
             reward += 50.0
-            info['sucess'] = True
+            info['continue'] = False
+            info['success'] = True
+
+        info['continue'] = True
+        info['success'] = False
 
         return self._get_observation(), reward, done, truncated, info
     
@@ -193,6 +201,7 @@ class BinPacking3DEnv(gym.Env):
         ems_array = np.array(self.ems_manager.ems_list, dtype=np.int32)
         current_num_ems = ems_array.shape[0]
         
+        # Pad the EMS list if the number of EMSs is less than the maximum
         if current_num_ems < self.max_ems:
             padding = np.zeros((self.max_ems - current_num_ems, 6), dtype=np.int32)
             ems_array = np.concatenate([ems_array, padding], axis=0)
@@ -202,12 +211,14 @@ class BinPacking3DEnv(gym.Env):
         # Create an ems mask
         ems_mask = [0] * self.max_ems + [1] * (self.max_ems - current_num_ems)
         ems_mask = np.array(ems_mask, dtype=np.int8)
+
+        self.action_mask = self.generate_action_mask()
         
         return {
-            'buffer': np.array(self.buffer, dtype=np.int32),
-            'ems': ems_array,
-            'ems_mask': ems_mask,
-            'action_mask': self.generate_action_mask(),
+            'buffer': np.array(self.buffer, dtype=np.int32), # Size: (buffer_size, 3)
+            'ems_list': ems_array, # Size: (max_ems, 6)
+            'ems_mask': ems_mask, # Size: (max_ems,)
+            'action_mask': self.action_mask, # Size: (W, L, num_rotations, buffer_size)
         }
         
     def _get_rotated_item(self, item: Tuple[int, int, int], rotation: int) -> Tuple[int, int, int]:
@@ -275,41 +286,67 @@ class BinPacking3DEnv(gym.Env):
 
         return action_mask
 
-    def render(self, verbose: bool = False):
+    def render(self, **kwargs) -> None:
         """
         Render the environment.
+        - verbose: Print all information.
+        - buffer: Print the buffer.
+        - ems_list: Print the EMS list.
+        - height_map: Print the height map.
+        - placed_items: Print the placed items.
+        - action_mask: Print the action mask.
         """
-        print("\n-----------------------------------")
-        print("\nCurrent height map:")
-        for x in range(self.W):
-            row = ""
-            for y in range(self.L):
-                row += f"{self.height_map[x][y]} "
-            print(row)
-        self.ems_manager.print_ems_list()
-        print("\nBuffer:")
-        for item in self.buffer:
-            print(item)
-        print("\nPlaced items:")
-        for item in self.placed_items:
-            print(item)
+        if kwargs['verbose']:
+            kwargs['buffer'] = True
+            kwargs['ems_list'] = True
+            kwargs['height_map'] = True
+            kwargs['placed_items'] = True
+            kwargs['action_mask'] = True
 
-        if verbose:
-            # Show action mask
-            print(f'\nAction mask shape: {self.action_mask.shape}')
-            for idx, item in enumerate(self.buffer):
-                print(f'Action mask for item {self.buffer[idx]}:')
+        if kwargs['buffer']:
+            print("- Buffer:")
+            for item in self.buffer:
+                print(item)
+            print()
+        
+        if kwargs['ems_list']:
+            print("- EMS List:")
+            self.ems_manager.print_ems_list()
+            print()
+
+        if kwargs['height_map']:
+            print("- Height Map:")
+            for i in range(self.W):
+                for j in range(self.L):
+                    print(f"{self.height_map[i][j]:2d}", end=" ")
+                print()
+            print()
+
+        if kwargs['placed_items']:
+            print("- Placed Items:")
+            for item in self.placed_items:
+                print(item)
+            print()
+
+        if kwargs['action_mask']:
+            print("- Action Mask:")
+            for k in range(self.buffer_size):
+                print(f"Item {k} in the buffer with size {self.buffer[k]}")
                 for rot in range(self.num_rotations):
-                    print(f'Rotation {rot}:')
-                    for x in range(self.W):
-                        row = ""
-                        for y in range(self.L):
-                            row += f"{self.action_mask[x, y, rot, idx]} "
-                        print(row)
-                    print("\n")
-        print("\n-----------------------------------")
+                    w, l, h = self._get_rotated_item(self.buffer[k], rot)
+                    print(f"Rotation {rot} with size {w} x {l} x {h}")
+                    for i in range(self.W):
+                        for j in range(self.L):
+                            print(self.action_mask[i, j, rot, k], end=" ")
+                        print()
+                    print()
 
-    def visualize(self):
+        print("--------------------")
+
+    def visualize(self) -> None:
+        """
+        Visualize the 3D bin packing problem.
+        """
         if not self.placed_items:
             print("No items have been placed yet.")
             return
@@ -414,7 +451,7 @@ class BinPacking3DEnv(gym.Env):
 
         return cloned_env
 
-    def close(self):
+    def close(self) -> None:
         """
         Close the environment and release resources.
         """

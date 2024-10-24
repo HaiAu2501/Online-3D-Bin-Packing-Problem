@@ -272,10 +272,8 @@ class EMSManager:
         """
         Print the current list of EMS.
         """
-        print("\nCurrent EMS List:")
         for idx, ems in enumerate(self.ems_list):
-            print(f"EMS {idx + 1}: (x_min={ems[0]}, y_min={ems[1]}, z_min={ems[2]}, "
-                  f"x_max={ems[3]}, y_max={ems[4]}, z_max={ems[5]})")
+            print(f"EMS {idx + 1}: {ems[0]} {ems[1]} {ems[2]} {ems[3]} {ems[4]} {ems[5]}")
 
     def clone(self):
         """
