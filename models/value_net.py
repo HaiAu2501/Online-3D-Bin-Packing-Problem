@@ -4,69 +4,60 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 from typing import Tuple
-import logging
 
 class ValueNetwork(nn.Module):
     def __init__(
         self, 
-        d_model: int = 128, 
-        hidden_dim: int = 256
+        d_input: int = 128, 
+        d_hidden: int = 256
     ):
         """
-        Value Network cho bài toán Bin Packing.
-        
-        Args:
-            d_model (int): Kích thước embedding.
-            hidden_dim (int): Kích thước của các lớp ẩn trong MLP.
+        Value Network for Bin Packing Problem.
+
+        :param d_input: The size of the input embeddings.
+        :param d_hidden: The size of the hidden layers.
         """
         super(ValueNetwork, self).__init__()
         
-        # MLP cho EMS Features
-        self.ems_mlp = nn.Sequential(
-            nn.Linear(d_model, hidden_dim),
+        # MLP for EMS list features
+        self.ems_list_mlp = nn.Sequential(
+            nn.Linear(d_input, d_hidden),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
+            nn.Linear(d_hidden, d_hidden)
         )
         
-        # MLP cho Item Features
-        self.item_mlp = nn.Sequential(
-            nn.Linear(d_model, hidden_dim),
+        # MLP for buffer features
+        self.buffer_mlp = nn.Sequential(
+            nn.Linear(d_input, d_hidden),
             nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim)
+            nn.Linear(d_hidden, d_hidden)
         )
         
-        # Final MLP để tạo ra giá trị
+        # Final MLP for value prediction
         self.final_mlp = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.Linear(d_hidden * 2, d_hidden),
             nn.ReLU(),
-            nn.Linear(hidden_dim, 1),
+            nn.Linear(d_hidden, 1),
             nn.Tanh()
         )
         
     def forward(
         self, 
-        ems_features: Tensor, 
-        item_features: Tensor
-    ) -> Tensor:
+        ems_list_features: Tensor, 
+        buffer_features: Tensor
+    ) -> float:
         """
-        Forward pass cho Value Network.
-        
-        Args:
-            ems_features (Tensor): [batch_size, d_model]
-            item_features (Tensor): [batch_size, d_model]
-        
-        Returns:
-            Tensor: [batch_size, 1] - Giá trị dự đoán cho mỗi sample
+        Forward pass for the Value Network.
+
+        :param ems_features: The embeddings of EMS list. # [batch_size, d_input]
+        :param item_features: The embeddings of Item list. # [batch_size, d_input]
         """
         
-        # Đưa qua MLP riêng biệt
-        ems_out = self.ems_mlp(ems_features)  # [batch_size, hidden_dim]
-        item_out = self.item_mlp(item_features)  # [batch_size, hidden_dim]
+        ems_list_out = self.ems_list_mlp(ems_list_features) # [batch_size, d_hidden]
+        buffer_out = self.buffer_mlp(buffer_features) # [batch_size, d_hidden]
         
-        # Concatenation
-        combined = torch.cat((ems_out, item_out), dim=1)  # [batch_size, hidden_dim * 2]
-        
-        # Đưa qua final MLP và áp dụng tanh
-        value = self.final_mlp(combined)  # [batch_size, 1]
+        combined = torch.cat((ems_list_out, buffer_out), dim=1) # [batch_size, 2*d_hidden]
+    
+        value = self.final_mlp(combined) # [batch_size, 1]
 
         return value
