@@ -250,6 +250,7 @@ class BinPacking3DEnv(gym.Env):
         - 0: The action is invalid.
         - 1: The action is valid.
         """
+        self.valid_actions = []
         action_mask = np.zeros((self.W, self.L, self.num_rotations, self.buffer_size), dtype=np.int8)
 
         for buffer_idx, item in enumerate(self.buffer):
@@ -283,6 +284,7 @@ class BinPacking3DEnv(gym.Env):
                             continue  # Insufficient support
 
                         action_mask[x_pos, y_pos, rot, buffer_idx] = 1
+                        self.valid_actions.append((x_pos, y_pos, rot, buffer_idx))
 
         return action_mask
 

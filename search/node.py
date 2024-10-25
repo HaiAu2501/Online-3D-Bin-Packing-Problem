@@ -23,18 +23,17 @@ class Node:
         :param parent: Parent node that leads to this state.
         :param action: Action taken to reach this state.
         """
-        self.state = state.clone()  # Use the clone method instead of deepcopy
-        self.parent = parent
+        self.state: BinPacking3DEnv = state.clone()  # Use the clone method instead of deepcopy
+        self.parent: Node = parent
         self.action = action
 
         self.children: Dict[Tuple[int, int, int, int], Node] = {}  # Mapping from actions to child nodes
         self.visits: int = 0  # Number of times node has been visited
         self.value: float = 0.0  # Accumulated value of the node
         self.is_terminal: bool = False  # Flag to indicate if the node is terminal
+        self.untried_actions: List[Tuple[int, int, int, int]] = self.get_valid_actions() 
 
-        self.untried_actions: List[Tuple[int, int, int, int]] = self.get_valid_actions() if not self.is_terminal else []  # Actions not yet tried
-
-        self.policy: Optional[np.ndarray] = None  # Action probabilities
+        self.action_probabilities: Optional[np.ndarray] = None # 
 
     def get_valid_actions(self) -> List[Tuple[int, int, int, int]]:
         """
@@ -45,19 +44,7 @@ class Node:
         if self.is_terminal:
             return []
 
-        action_mask = self.state.action_mask
-        W, L, num_rotations, buffer_size = self.state.W, self.state.L, self.state.num_rotations, self.state.buffer_size
-        valid_actions = []
-
-        # Iterate through the action mask to collect valid actions
-        for x in range(W):
-            for y in range(L):
-                for rot in range(num_rotations):
-                    for buf_idx in range(buffer_size):
-                        if action_mask[x, y, rot, buf_idx]:
-                            valid_actions.append((x, y, rot, buf_idx))
-
-        return valid_actions
+        return self.state.valid_actions
 
     def is_fully_expanded(self) -> bool:
         """
@@ -74,10 +61,16 @@ class Node:
         :param c_param: Exploration parameter.
         :return: The child node with the highest UCB1 value.
         """
-        choices_weights = [
-            (child.value / child.visits) + c_param * math.sqrt((2 * math.log(self.visits) / child.visits))
-            for child in self.children.values()
-        ]
+        choices_weights = []
+        for child in self.children.values():
+            if child.visits == 0:
+                ucb1 = float('inf')  # Ensure unvisited nodes are selected first
+            else:
+                exploitation = child.value / child.visits
+                exploration = c_param * math.sqrt(math.log(self.visits) / child.visits)
+                ucb1 = exploitation + exploration
+            choices_weights.append(ucb1)
+
         # Return the child with the maximum UCB1 value
         if choices_weights:
             return list(self.children.values())[np.argmax(choices_weights)]
@@ -96,7 +89,7 @@ class Node:
         if not self.untried_actions:
             return None
 
-        # Select an action to try
+        # Select an action from the untried actions
         action = self.untried_actions.pop()
 
         new_state: BinPacking3DEnv = self.state.clone()
@@ -104,15 +97,9 @@ class Node:
         # Apply the action to the current state to get the next state
         _, _, done, truncated, _ = new_state.step(action)
 
-        # Create a new child node with the resulting state
+        # Create a new child node
         child_node = Node(state=new_state, parent=self, action=action)
-        child_node.is_terminal = done or truncated  # Mark as terminal if done or truncated
-
-        # Khởi tạo visits bằng 1 để tránh chia cho 0
-        child_node.visits = 1
-
-        # Khởi tạo giá trị dựa trên reward ngay lập tức hoặc 0 nếu không
-        child_node.value = 0.0  # Hoặc có thể khởi tạo dựa trên reward nếu có thông tin
+        child_node.is_terminal = done or truncated  # Đánh dấu terminal nếu done hoặc truncated
 
         self.children[action] = child_node
         return child_node
@@ -126,10 +113,3 @@ class Node:
         self.visits += 1
         self.value += reward  # Accumulate the reward
 
-    def fully_expanded_children(self) -> List['Node']:
-        """
-        Retrieve a list of fully expanded child nodes.
-
-        :return: A list of child nodes that are fully expanded.
-        """
-        return [child for child in self.children.values() if child.is_fully_expanded()]
