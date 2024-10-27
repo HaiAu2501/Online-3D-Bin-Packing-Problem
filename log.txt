@@ -1,0 +1,9 @@
+1. Sinh dữ liệu chuyên gia (tự sinh).
+2. Song song hóa MCTS.
+3. Sinh giá trị baseline... (chọn 1 thuật toán nào đó, hoặc tập thuật toán)
+
+
+
+
+
+4. ... Latent space ... -> Lưu lịch sử của các node thế nào? -> Nhúng vào Latent Space
