@@ -15,11 +15,13 @@ class Generator:
         self.bin_size: List[int] = bin_size
         self.items: List[Tuple[List[int], List[int]]] = []
 
-    def generate(self, seed: int) -> None:
+    def generate(self, seed: int, shuffle: bool = True, verbose: bool = False) -> None:
         """
         Generate random items for the bin with a given seed and write them to a file.
         
         :param seed: Seed for random number generation
+        :param shuffle: Whether to shuffle items before writing to the file (default: True)
+        :param verbose: If True, write full item info (x, y, z, w, l, h); otherwise, only w, l, h (default: False)
         """
         self.seed = seed  # Update seed for this generation run
 
@@ -31,7 +33,6 @@ class Generator:
             Generate random items for a single bin by recursively splitting along the largest dimension.
             """
             items = [(bin_origin, self.bin_size[:])]
-            bin_volume = self.bin_size[0] * self.bin_size[1] * self.bin_size[2]
 
             for _ in range(self.n_items - 1):
                 (origin, item) = items.pop()
@@ -71,15 +72,27 @@ class Generator:
         random.seed(self.seed)
         self.items = generate_for_bin([0, 0, 0])
         
+        # Shuffle or sort items based on `shuffle` parameter
+        if shuffle:
+            random.shuffle(self.items)
+        else:
+            self.items.sort(key=lambda item: (item[0][2], item[0][1], item[0][0]))
+
         # Ensure the directory exists
-        os.makedirs(os.path.dirname(self.filename), exist_ok=True)
+        # os.makedirs(os.path.dirname(self.filename), exist_ok=True)
 
         # Write data to file
         with open(self.filename, 'w') as file:
             file.write(f'{self.bin_size[0]} {self.bin_size[1]} {self.bin_size[2]}\n')
-            for (_, item) in self.items:
-                sample = random.sample(item, 3)
-                file.write(f'{sample[0]} {sample[1]} {sample[2]}\n')
+            for (origin, item) in self.items:
+                x, y, z = origin
+                w, l, h = item
+                if verbose:
+                    # Full info: x, y, z, w, l, h
+                    file.write(f'{x} {y} {z} {w} {l} {h}\n')
+                else:
+                    # Only w, l, h
+                    file.write(f'{w} {l} {h}\n')
 
     def visualize(self) -> None:
         """
