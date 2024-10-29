@@ -6,4 +6,4 @@
 
 
 
-4. ... Latent space ... -> Lưu lịch sử của các node thế nào? -> Nhúng vào Latent Space
+4. [... Latent space ...] -> Lưu lịch sử của các node thế nào? -> Nhúng vào Latent Space

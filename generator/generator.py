@@ -1,132 +1,149 @@
-from dataclasses import dataclass
-from typing import List
+import os
 import random
+import matplotlib.pyplot as plt
+from typing import List, Tuple
+from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 
-@dataclass
-class Box:
-    x: int
-    y: int
-    z: int
-    width: int
-    height: int
-    depth: int
+class Generator:
+    def __init__(self, n_items: int, bin_size: List[int] = [100, 100, 100]):
+        """
+        Parameters:
+        :param n_items: Number of items to generate for the bin
+        :param bin_size: Size of the bin in 3 dimensions
+        """
+        self.n_items: int = n_items
+        self.bin_size: List[int] = bin_size
+        self.items: List[Tuple[List[int], List[int]]] = []
 
-def recursive_partition(box: Box, min_size: int) -> List[Box]:
-    """
-    Chia hộp hiện tại thành các hộp nhỏ hơn đệ quy với kích thước số nguyên.
-    
-    :param box: Hộp hiện tại cần chia.
-    :param min_size: Kích thước tối thiểu của hộp nhỏ (số nguyên).
-    :return: Danh sách các hộp nhỏ sau khi chia.
-    """
-    result = []
-    
-    def partition(current_box: Box):
-        # Kiểm tra xem có thể chia tiếp hộp hiện tại hay không
-        can_split_x = current_box.width >= 2 * min_size
-        can_split_y = current_box.depth >= 2 * min_size
-        can_split_z = current_box.height >= 2 * min_size
+    def generate(self, seed: int) -> None:
+        """
+        Generate random items for the bin with a given seed and write them to a file.
         
-        # Tạo danh sách các trục có thể chia
-        axes = []
-        if can_split_x:
-            axes.append('x')
-        if can_split_y:
-            axes.append('y')
-        if can_split_z:
-            axes.append('z')
+        :param seed: Seed for random number generation
+        """
+        self.seed = seed  # Update seed for this generation run
+
+        # Create a filename based on the new format
+        self.filename: str = f'data/{self.bin_size[0]}_{self.bin_size[1]}_{self.bin_size[2]}_{self.n_items}_{self.seed}.dat'
+
+        def generate_for_bin(bin_origin: List[int]) -> List[Tuple[List[int], List[int]]]:
+            """
+            Generate random items for a single bin by recursively splitting along the largest dimension.
+            """
+            items = [(bin_origin, self.bin_size[:])]
+            bin_volume = self.bin_size[0] * self.bin_size[1] * self.bin_size[2]
+
+            for _ in range(self.n_items - 1):
+                (origin, item) = items.pop()
+                
+                # Choose the dimension with the largest size to split
+                dimension: int = item.index(max(item))
+                size: int = item[dimension]
+                
+                if size == 1:
+                    items.append((origin, item))
+                    continue
+                
+                # Randomly choose a cut point
+                cut_point: int = random.randint(1, size - 1)
+                
+                # Create 2 new items after cutting
+                new_item1: List[int] = item[:]
+                new_item2: List[int] = item[:]
+                new_item1[dimension] = cut_point
+                new_item2[dimension] = size - cut_point
+                
+                # Create 2 new origins
+                new_origin1: List[int] = origin[:]
+                new_origin2: List[int] = origin[:]
+                new_origin2[dimension] += cut_point
+                
+                # Add new items to the list
+                items.append((new_origin1, new_item1))
+                items.append((new_origin2, new_item2))
+                items.sort(key=lambda x: x[1][0] * x[1][1] * x[1][2])
+
+            return items
+
+        if self.n_items < 10 or self.n_items > 1000:
+            raise ValueError('Number of items must be between 10 and 1000')
         
-        # Nếu không thể chia tiếp, thêm hộp vào kết quả
-        if not axes:
-            result.append(current_box)
-            return
+        random.seed(self.seed)
+        self.items = generate_for_bin([0, 0, 0])
         
-        # Chọn ngẫu nhiên một trục từ các trục có thể chia
-        axis = random.choice(axes)
+        # Ensure the directory exists
+        os.makedirs(os.path.dirname(self.filename), exist_ok=True)
+
+        # Write data to file
+        with open(self.filename, 'w') as file:
+            file.write(f'{self.bin_size[0]} {self.bin_size[1]} {self.bin_size[2]}\n')
+            for (_, item) in self.items:
+                sample = random.sample(item, 3)
+                file.write(f'{sample[0]} {sample[1]} {sample[2]}\n')
+
+    def visualize(self) -> None:
+        """
+        Visualize the generated items in a 3D plot.
+        """
+        def plot_box(ax, x0: int, y0: int, z0: int, dx: int, dy: int, dz: int, color) -> None:
+            vertices = [
+                [x0, y0, z0], [x0 + dx, y0, z0], [x0 + dx, y0 + dy, z0], [x0, y0 + dy, z0],
+                [x0, y0, z0 + dz], [x0 + dx, y0, z0 + dz], [x0 + dx, y0 + dy, z0 + dz], [x0, y0 + dy, z0 + dz]
+            ]
+            
+            faces = [
+                [vertices[j] for j in [0, 1, 5, 4]],
+                [vertices[j] for j in [7, 6, 2, 3]],
+                [vertices[j] for j in [0, 3, 7, 4]],
+                [vertices[j] for j in [1, 2, 6, 5]],
+                [vertices[j] for j in [0, 1, 2, 3]],
+                [vertices[j] for j in [4, 5, 6, 7]]
+            ]
+            
+            ax.add_collection3d(Poly3DCollection(faces, facecolors=color, linewidths=.3, edgecolors='k', alpha=.5, zsort='min'))
+
+        if not self.items:
+            raise ValueError('Items have not been generated yet')
+
+        fig = plt.figure(figsize=(9, 5))
+        ax = fig.add_subplot(111, projection='3d')
+
+        # Create a color palette for items
+        colors = plt.cm.viridis([i / len(self.items) for i in range(len(self.items))])
+
+        for i, (origin, item) in enumerate(self.items):
+            x0, y0, z0 = origin
+            dx, dy, dz = item
+            color = colors[i % len(colors)]
+            plot_box(ax, x0, y0, z0, dx, dy, dz, color)
+
+        ax.set_xlabel('X')
+        ax.set_ylabel('Y')
+        ax.set_zlabel('Z')
+
+        # Set limits for the axes
+        ax.set_xlim([0, self.bin_size[0]])
+        ax.set_ylim([0, self.bin_size[1]])
+        ax.set_zlim([0, self.bin_size[2]])
+
+        ax.title.set_text(f'3D Bin Packing Visualization')
         
-        # Chia hộp theo trục được chọn
-        if axis == 'x':
-            split = random.randint(min_size, current_box.width - min_size)
-            box1 = Box(current_box.x, current_box.y, current_box.z,
-                       split, current_box.height, current_box.depth)
-            box2 = Box(current_box.x + split, current_box.y, current_box.z,
-                       current_box.width - split, current_box.height, current_box.depth)
-        elif axis == 'y':
-            split = random.randint(min_size, current_box.depth - min_size)
-            box1 = Box(current_box.x, current_box.y, current_box.z,
-                       current_box.width, current_box.height, split)
-            box2 = Box(current_box.x, current_box.y + split, current_box.z,
-                       current_box.width, current_box.height, current_box.depth - split)
-        else:  # axis == 'z'
-            split = random.randint(min_size, current_box.height - min_size)
-            box1 = Box(current_box.x, current_box.y, current_box.z,
-                       current_box.width, split, current_box.depth)
-            box2 = Box(current_box.x, current_box.y, current_box.z + split,
-                       current_box.width, current_box.height - split, current_box.depth)
+        # Add a legend with information
+        info_text = (
+            f'Bin size: {self.bin_size}\n'
+            f'Number of items: {self.n_items}\n'
+        )
+        plt.figtext(.8, .5, info_text, fontsize=8, ha='left', va='center', bbox=dict(facecolor='white', edgecolor='black'))
+
+        plt.show()
+
+    def delete(self) -> None:
+        """
+        Delete all files generated with the pattern {W}_{L}_{H}_{num_items}_{seed}.dat.
+        """
+        base_path = os.path.dirname(self.filename)
+        pattern = f"{self.bin_size[0]}_{self.bin_size[1]}_{self.bin_size[2]}_{self.n_items}_*.dat"
+        files_to_delete = [f for f in os.listdir(base_path) if f.endswith('.dat') and f.startswith(pattern.split('*')[0])]
         
-        # Đệ quy chia các hộp con
-        partition(box1)
-        partition(box2)
-    
-    partition(box)
-    return result
-
-def sort_boxes_by_z(boxes: List[Box]) -> List[Box]:
-    return sorted(boxes, key=lambda box: box.z)
-
-def check_overlap(box1: Box, box2: Box) -> bool:
-    return not (box1.x + box1.width <= box2.x or
-                box2.x + box2.width <= box1.x or
-                box1.y + box1.depth <= box2.y or
-                box2.y + box2.depth <= box1.y or
-                box1.z + box1.height <= box2.z or
-                box2.z + box2.height <= box1.z)
-
-def verify_no_overlap(boxes: List[Box]) -> bool:
-    for i in range(len(boxes)):
-        for j in range(i + 1, len(boxes)):
-            if check_overlap(boxes[i], boxes[j]):
-                print(f"Chồng lấp giữa Hộp {i + 1} và Hộp {j + 1}")
-                return False
-    return True
-
-def main():
-    random.seed(42)  # Đặt seed để kết quả lặp lại được (tùy chọn)
-    
-    container_size = (10, 10, 10)  # Kích thước hộp lớn (x, y, z)
-    min_box_size = 3  # Kích thước tối thiểu của hộp nhỏ (số nguyên)
-    initial_box = Box(0, 0, 0, *container_size)
-    
-    # Chia hộp lớn thành các hộp nhỏ
-    boxes = recursive_partition(initial_box, min_box_size)
-    sorted_boxes = sort_boxes_by_z(boxes)
-    
-    # Tính tổng thể tích các hộp nhỏ để xác minh
-    total_volume = sum(box.width * box.height * box.depth for box in sorted_boxes)
-    container_volume = container_size[0] * container_size[1] * container_size[2]
-    
-    print(f"Tổng số hộp nhỏ: {len(sorted_boxes)}")
-    print(f"Tổng thể tích các hộp nhỏ: {total_volume}")
-    print(f"Thể tích hộp lớn: {container_volume}\n")
-    
-    if total_volume != container_volume:
-        print("Cảnh báo: Thể tích các hộp nhỏ không bằng thể tích hộp lớn!")
-    else:
-        print("Thể tích các hộp nhỏ bằng thể tích hộp lớn. Phủ kín thành công!\n")
-    
-    # Kiểm tra sự chồng lấp
-    if verify_no_overlap(sorted_boxes):
-        print("Không có sự chồng lấp giữa các hộp nhỏ.\n")
-    else:
-        print("Có sự chồng lấp giữa các hộp nhỏ!\n")
-    
-    # Hiển thị kết quả
-    for idx, box in enumerate(sorted_boxes):
-        print(f"Hộp {idx + 1}:")
-        print(f"  Tọa độ góc dưới: ({box.x}, {box.y}, {box.z})")
-        print(f"  Kích thước: {box.width} x {box.depth} x {box.height}\n")
-        with open("boxes.dat", "a") as f:
-            f.write(f"{box.width} {box.depth} {box.height}\n")
-
-if __name__ == "__main__":
-    main()
+        for file in files_to_delete:
+            os.remove(os.path.join(base_path, file))
