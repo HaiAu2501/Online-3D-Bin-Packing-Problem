@@ -1,5 +1,6 @@
 import os
 import random
+import pandas as pd
 import matplotlib.pyplot as plt
 from typing import List, Tuple
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
@@ -15,13 +16,14 @@ class Generator:
         self.bin_size: List[int] = bin_size
         self.items: List[Tuple[List[int], List[int]]] = []
 
-    def generate(self, seed: int, shuffle: bool = True, verbose: bool = False) -> None:
+    def generate(self, seed: int, shuffle: bool = True, verbose: bool = False, detailed: bool = False) -> None:
         """
         Generate random items for the bin with a given seed and write them to a file.
         
         :param seed: Seed for random number generation
         :param shuffle: Whether to shuffle items before writing to the file (default: True)
         :param verbose: If True, write full item info (x, y, z, w, l, h); otherwise, only w, l, h (default: False)
+        :param detailed: If True, write detailed item info (default: False)
         """
         self.seed = seed  # Update seed for this generation run
 
@@ -93,6 +95,21 @@ class Generator:
                 else:
                     # Only w, l, h
                     file.write(f'{w} {l} {h}\n')
+
+        if detailed:
+            # Use pandas to display the data in a tabular format
+            data = {
+                'Item': list(range(1, len(self.items) + 1)),
+                'X': [origin[0] for origin, _ in self.items],
+                'Y': [origin[1] for origin, _ in self.items],
+                'Z': [origin[2] for origin, _ in self.items],
+                'W': [item[0] for _, item in self.items],
+                'L': [item[1] for _, item in self.items],
+                'H': [item[2] for _, item in self.items],
+            }
+            df = pd.DataFrame(data)
+            print(f'Generated {self.n_items} items for bin {self.bin_size} with seed {self.seed}\n')
+            print(df.to_string(index=False))
 
     def visualize(self) -> None:
         """
