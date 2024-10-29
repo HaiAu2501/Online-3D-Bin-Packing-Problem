@@ -4,3 +4,4 @@ numpy==1.26.4
 pandas==2.2.1
 typing==3.7.4.3
 tqdm==4.66.2
+torch==2.3.0
