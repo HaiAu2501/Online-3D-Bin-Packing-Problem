@@ -3,3 +3,7 @@ __pycache__/
 
 # Ignore .private directories
 .private/
+
+# Ignore data directories
+generator/data/
+train/data/

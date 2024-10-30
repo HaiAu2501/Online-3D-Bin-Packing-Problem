@@ -1,9 +1,13 @@
 import os
 import random
+from pathlib import Path
+from typing import List, Tuple, Dict
+
 import pandas as pd
 import matplotlib.pyplot as plt
-from typing import List, Tuple, Dict
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+
+_generator_dir = Path(__file__).parent.resolve()
 
 class Generator:
     def __init__(self, n_items: int, bin_size: List[int] = [100, 100, 100]):
@@ -16,7 +20,7 @@ class Generator:
         self.bin_size: List[int] = bin_size
         # Dictionary to store items for each (seed, version)
         self.versions: Dict[Tuple[int, int], List[Tuple[List[int], List[int]]]] = {}
-        self.directory: str = 'data'
+        self.directory: str = _generator_dir / 'data'
         os.makedirs(self.directory, exist_ok=True)
 
     def generate(self, seed: int, shuffle: bool = True, verbose: bool = False, detailed: bool = False) -> None:
@@ -123,6 +127,10 @@ class Generator:
             for origin, size in base_items:
                 new_origin, new_size = apply_reflection(origin, size, version)
                 reflected_items.append((new_origin, new_size))
+
+            if not shuffle:
+                reflected_items.sort(key=lambda item: (item[0][2], item[0][1], item[0][0]))
+
             self.versions[(seed, version)] = reflected_items
 
             # Define the filename for the current version
