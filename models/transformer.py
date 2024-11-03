@@ -12,6 +12,7 @@ class CombinedPooling(nn.Module):
     def __init__(self, d_model):
         super(CombinedPooling, self).__init__()
         self.attn = nn.Linear(d_model, 1)
+        self.pooling_linear = nn.Linear(3*d_model, d_model)
         
     def forward(self, x: Tensor) -> Tensor:
         mean_pool = x.mean(dim=0)  # [batch_size, d_model]
@@ -19,6 +20,7 @@ class CombinedPooling(nn.Module):
         attn_weights = torch.softmax(self.attn(x).squeeze(-1), dim=0)  # [sequence_length, batch_size]
         attn_pool = torch.sum(x * attn_weights.unsqueeze(-1), dim=0)  # [batch_size, d_model]
         combined = torch.cat([mean_pool, max_pool, attn_pool], dim=-1)  # [batch_size, 3*d_model]
+        combined = self.pooling_linear(combined)
         return combined
 
 class BinPackingTransformer(nn.Module):
@@ -85,8 +87,8 @@ class BinPackingTransformer(nn.Module):
         # ems_list_features = ems_list_embedded.mean(dim=0)  # [batch_size, d_model]
         # buffer_features = buffer_embedded.mean(dim=0)  # [batch_size, d_model]
 
-        ems_list_features = self.combined_pooling(ems_list_embedded)  # [batch_size, 3*d_model]
-        buffer_features = self.combined_pooling(buffer_embedded)  # [batch_size, 3*d_model]
+        ems_list_features = self.combined_pooling(ems_list_embedded)  # [batch_size, d_model]
+        buffer_features = self.combined_pooling(buffer_embedded)  # [batch_size, d_model]
 
         return ems_list_features, buffer_features
 

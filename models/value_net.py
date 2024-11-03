@@ -38,7 +38,7 @@ class ValueNetwork(nn.Module):
             nn.Linear(d_hidden * 2, d_hidden),
             nn.ReLU(),
             nn.Linear(d_hidden, 1),
-            nn.Tanh()
+            nn.Sigmoid() # To ensure value is in [0, 1]
         )
         
     def forward(
