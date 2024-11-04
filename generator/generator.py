@@ -1,13 +1,9 @@
 import os
 import random
-from pathlib import Path
-from typing import List, Tuple, Dict
-
 import pandas as pd
 import matplotlib.pyplot as plt
+from typing import List, Tuple, Dict
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
-
-_generator_dir = Path(__file__).parent.resolve()
 
 class Generator:
     def __init__(self, n_items: int, bin_size: List[int] = [100, 100, 100]):
@@ -20,7 +16,7 @@ class Generator:
         self.bin_size: List[int] = bin_size
         # Dictionary to store items for each (seed, version)
         self.versions: Dict[Tuple[int, int], List[Tuple[List[int], List[int]]]] = {}
-        self.directory: str = _generator_dir / 'data'
+        self.directory: str = 'data'
         os.makedirs(self.directory, exist_ok=True)
 
     def generate(self, seed: int, shuffle: bool = True, verbose: bool = False, detailed: bool = False) -> None:
@@ -86,52 +82,60 @@ class Generator:
         else:
             base_items.sort(key=lambda item: (item[0][2], item[0][1], item[0][0]))
 
-        # Function to apply reflections based on version
-        def apply_reflection(origin: List[int], size: List[int], version: int) -> Tuple[List[int], List[int]]:
+        # Function to apply transformations based on version
+        def apply_transformation(origin: List[int], size: List[int], version: int) -> Tuple[List[int], List[int]]:
             """
-            Apply reflection to the item's origin based on the version number.
+            Apply rotation and reflection to the item's origin based on the version number.
 
             :param origin: Original origin [x, y, z]
             :param size: Size [w, l, h]
             :param version: Version number (1-8)
-            :return: Reflected origin and size
+            :return: Transformed origin and size
             """
-            # Determine reflection flags using binary representation of version
-            reflect_x = (version & 0b100) >> 2
-            reflect_y = (version & 0b010) >> 1
-            reflect_z = version & 0b001
+            # Define rotation angles (in degrees) for versions 1-4 and 5-8
+            rotation_angles = {1: 0, 2: 90, 3: 180, 4: 270}
+            # Versions 5-8 are reflections + rotations
+            is_reflected = version > 4
+            base_version = version if version <=4 else version -4
+            angle = rotation_angles[base_version]
 
             x, y, z = origin
             w, l, h = size
 
-            if reflect_x:
-                x_new = self.bin_size[0] - x - w
+            # Apply rotation around Z-axis
+            if angle == 0:
+                x_new, y_new = x, y
+                w_new, l_new = w, l
+            elif angle == 90:
+                x_new, y_new = self.bin_size[0] - y - l, x
+                w_new, l_new = l, w
+            elif angle == 180:
+                x_new, y_new = self.bin_size[0] - x - w, self.bin_size[1] - y - l
+                w_new, l_new = w, l
+            elif angle == 270:
+                x_new, y_new = y, self.bin_size[1] - x - w
+                w_new, l_new = l, w
             else:
-                x_new = x
+                raise ValueError('Invalid rotation angle.')
 
-            if reflect_y:
-                y_new = self.bin_size[1] - y - l
-            else:
-                y_new = y
+            # Apply reflection across Y-axis if needed (for example)
+            if is_reflected:
+                x_new = self.bin_size[0] - x_new - w_new
 
-            if reflect_z:
-                z_new = self.bin_size[2] - z - h
-            else:
-                z_new = z
-
-            return [x_new, y_new, z_new], [w, l, h]
+            return [x_new, y_new, z], [w_new, l_new, h]
 
         # Iterate through versions 1 to 8
         for version in range(1, 9):
-            reflected_items = []
+            transformed_items = []
             for origin, size in base_items:
-                new_origin, new_size = apply_reflection(origin, size, version)
-                reflected_items.append((new_origin, new_size))
-
+                new_origin, new_size = apply_transformation(origin, size, version)
+                transformed_items.append((new_origin, new_size))
+            
+            # Nếu shuffle=False, sắp xếp transformed_items theo (z, y, x)
             if not shuffle:
-                reflected_items.sort(key=lambda item: (item[0][2], item[0][1], item[0][0]))
+                transformed_items.sort(key=lambda item: (item[0][2], item[0][1], item[0][0]))
 
-            self.versions[(seed, version)] = reflected_items
+            self.versions[(seed, version)] = transformed_items
 
             # Define the filename for the current version
             version_filename = f'{self.bin_size[0]}_{self.bin_size[1]}_{self.bin_size[2]}_{self.n_items}_{seed}_{version}.dat'
@@ -140,7 +144,7 @@ class Generator:
             # Write data to the version file
             with open(version_filepath, 'w') as file:
                 file.write(f'{self.bin_size[0]} {self.bin_size[1]} {self.bin_size[2]}\n')
-                for (origin, size) in reflected_items:
+                for (origin, size) in transformed_items:
                     x, y, z = origin
                     w, l, h = size
                     if verbose:
@@ -153,13 +157,13 @@ class Generator:
             if detailed:
                 # Use pandas to display the data in a tabular format for each version
                 data = {
-                    'Item': list(range(1, len(reflected_items) + 1)),
-                    'X': [item[0][0] for item in reflected_items],
-                    'Y': [item[0][1] for item in reflected_items],
-                    'Z': [item[0][2] for item in reflected_items],
-                    'W': [item[1][0] for item in reflected_items],
-                    'L': [item[1][1] for item in reflected_items],
-                    'H': [item[1][2] for item in reflected_items],
+                    'Item': list(range(1, len(transformed_items) + 1)),
+                    'X': [item[0][0] for item in transformed_items],
+                    'Y': [item[0][1] for item in transformed_items],
+                    'Z': [item[0][2] for item in transformed_items],
+                    'W': [item[1][0] for item in transformed_items],
+                    'L': [item[1][1] for item in transformed_items],
+                    'H': [item[1][2] for item in transformed_items],
                 }
                 df = pd.DataFrame(data)
                 print(f'\nSeed {seed}, Version {version}: Generated {self.n_items} items for bin {self.bin_size}')
@@ -182,13 +186,14 @@ class Generator:
             raise ValueError(f'Seed {seed} has not been generated yet.')
 
         if version == -1:
-            # Visualize all 8 versions in a single figure with subplots
-            fig = plt.figure(figsize=(20, 10))
+            # Visualize all 8 versions in a single figure with subplots (2 rows x 4 columns)
+            fig = plt.figure(figsize=(24, 12))
             for ver in range(1, 9):
                 ax = fig.add_subplot(2, 4, ver, projection='3d')
                 key = (seed, ver)
                 if key not in self.versions:
-                    ax.text(0.5, 0.5, 0.5, 'Not Generated', horizontalalignment='center', verticalalignment='center')
+                    ax.text2D(0.5, 0.5, 'Not Generated', transform=ax.transAxes,
+                              horizontalalignment='center', verticalalignment='center')
                     ax.set_title(f'Version {ver} (Not Generated)')
                     ax.set_xlim([0, self.bin_size[0]])
                     ax.set_ylim([0, self.bin_size[1]])
@@ -241,7 +246,7 @@ class Generator:
                 ax.set_title(f'Version {ver}')
 
             # Add a main title
-            fig.suptitle(f'3D Bin Packing Visualization for Seed {seed} - All Versions', fontsize=16)
+            fig.suptitle(f'3D Bin Packing Visualization for Seed {seed} - All Versions', fontsize=20)
 
             # Add a legend with information
             info_text = (
@@ -250,7 +255,8 @@ class Generator:
                 f'Seed: {seed}\n'
                 f'All 8 Versions'
             )
-            plt.figtext(.5, 0.05, info_text, fontsize=10, ha='center', va='center', bbox=dict(facecolor='white', edgecolor='black'))
+            plt.figtext(0.5, 0.02, info_text, fontsize=12, ha='center', va='center',
+                        bbox=dict(facecolor='white', edgecolor='black'))
 
             plt.tight_layout(rect=[0, 0.05, 1, 0.95])
             plt.show()
@@ -266,7 +272,7 @@ class Generator:
             if not items:
                 raise ValueError('No items to visualize for the specified seed and version.')
 
-            fig = plt.figure(figsize=(9, 5))
+            fig = plt.figure(figsize=(12, 8))
             ax = fig.add_subplot(111, projection='3d')
 
             # Create a color palette for items
@@ -311,7 +317,7 @@ class Generator:
             ax.set_ylim([0, self.bin_size[1]])
             ax.set_zlim([0, self.bin_size[2]])
 
-            ax.title.set_text(f'3D Bin Packing Visualization - Seed {seed}, Version {version}')
+            ax.set_title(f'3D Bin Packing Visualization - Seed {seed}, Version {version}')
 
             # Add a legend with information
             info_text = (
@@ -320,7 +326,8 @@ class Generator:
                 f'Seed: {seed}\n'
                 f'Version: {version}'
             )
-            plt.figtext(.8, .5, info_text, fontsize=8, ha='left', va='center', bbox=dict(facecolor='white', edgecolor='black'))
+            plt.figtext(0.8, 0.5, info_text, fontsize=12, ha='left', va='center',
+                        bbox=dict(facecolor='white', edgecolor='black'))
 
             plt.show()
 
