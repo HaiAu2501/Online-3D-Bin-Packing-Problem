@@ -2,7 +2,7 @@ from generator import Generator
 
 if __name__ == '__main__':
     generator = Generator(
-        n_items=10,
+        n_items=15,
         bin_size=[10, 10, 10],
     )
 

@@ -95,7 +95,7 @@ class BinPacking3DEnv(gym.Env):
             ),
         })
         
-    def reset(self) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict]:
+    def reset(self) -> Tuple[Dict[str, np.ndarray], Dict]:
         """
         Reset the environment to the initial state or start a new episode.
         """
@@ -115,7 +115,7 @@ class BinPacking3DEnv(gym.Env):
             else:
                 self.buffer.append((0, 0, 0))
 
-        return self._get_observation()
+        return self._get_observation(), {}
     
     def step(self, action: Optional[Tuple[int, int, int, int]]) -> Tuple[Dict[str, np.ndarray], float, bool, bool, Dict]:
         """
