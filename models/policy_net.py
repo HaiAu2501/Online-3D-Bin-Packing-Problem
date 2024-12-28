@@ -53,13 +53,10 @@ class PolicyNetwork(nn.Module):
         ems_list_out = self.ems_list_mlp(ems_list_features) # [batch_size, d_hidden]
         buffer_out = self.buffer_mlp(buffer_features) # [batch_size, d_hidden]
 
-        combined = ems_list_out * buffer_out # [batch_size, d_hidden]
+        combined = ems_list_out * buffer_out # [batch_size, d_hidden] (*)
         combined = self.output_linear(combined) # [batch_size, d_action]
         probabilities = self.softmax(combined) # [batch_size, d_action] 
         masked_probabilities = probabilities * action_mask  # [batch_size, d_action]
-
-        # Normalize the probabilities
-        masked_probabilities = masked_probabilities / masked_probabilities.sum(dim=1, keepdim=True).clamp(min=1e-9)  # [batch_size, d_action]
 
         return masked_probabilities
 

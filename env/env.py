@@ -18,7 +18,6 @@ class BinPacking3DEnv(gym.Env):
         items: List[Tuple[int, int, int]],
         buffer_size: int = 2,
         num_rotations: int = 2,
-        max_ems: int = 100,
     ):
         super(BinPacking3DEnv, self).__init__()
         """
@@ -33,7 +32,6 @@ class BinPacking3DEnv(gym.Env):
         self.items: List[Tuple[int, int, int]] = items
         self.buffer_size: int = buffer_size
         self.num_rotations = num_rotations
-        self.max_ems = max_ems
 
         if self.buffer_size > len(self.items):
             raise ValueError("Buffer size must be less than the number of items.")
@@ -72,20 +70,16 @@ class BinPacking3DEnv(gym.Env):
             'buffer': spaces.Box(
                 low=0,
                 high=max(self.W, self.L, self.H),
-                shape=(self.buffer_size, 3), 
+                shape=(self.buffer_size, 3),
                 dtype=np.int32
             ),
-            'ems_list': spaces.Box(
-                low=0,
-                high=max(self.W, self.L, self.H),
-                shape=(self.max_ems, 6),
-                dtype=np.int32
-            ),
-            'ems_mask': spaces.Box(
-                low=0,
-                high=1,
-                shape=(self.max_ems,),
-                dtype=np.int8
+            'ems_list': spaces.Sequence(
+                spaces.Box(
+                    low=0,
+                    high=max(self.W, self.L, self.H),
+                    shape=(6,),
+                    dtype=np.int32
+                )
             ),
             'action_mask': spaces.Box(
                 low=0,
@@ -138,11 +132,6 @@ class BinPacking3DEnv(gym.Env):
         info = {}
         reward = 0.0
 
-        if action is None:
-            truncated = True
-            info['continue'] = False
-            return self._get_observation(), reward, done, truncated, info
-
         # Unpack the action
         x, y, rotation, item_index = action 
 
@@ -172,7 +161,7 @@ class BinPacking3DEnv(gym.Env):
         })
 
         # Reward is the percentage of the item's volume in the bin
-        reward += (100 * rotated_w * rotated_l * rotated_h) / (self.W * self.L * self.H)
+        reward += (rotated_w * rotated_l * rotated_h) / (self.W * self.L * self.H)
 
         # Update the buffer
         self.buffer.pop(item_index)
@@ -183,14 +172,8 @@ class BinPacking3DEnv(gym.Env):
             self.buffer.append((0, 0, 0))
 
         # Check if all items are placed
-        if all(item == (0, 0, 0) for item in self.buffer):
+        if all(item == (0, 0, 0) for item in self.buffer) or not self.generate_action_mask().any():
             done = True
-            reward += 50.0
-            info['continue'] = False
-            info['success'] = True
-
-        info['continue'] = True
-        info['success'] = False
 
         return self._get_observation(), reward, done, truncated, info
     
@@ -199,25 +182,11 @@ class BinPacking3DEnv(gym.Env):
         Create an observation from the current state.
         """
         ems_array = np.array(self.ems_manager.ems_list, dtype=np.int32)
-        current_num_ems = ems_array.shape[0]
-        
-        # Pad the EMS list if the number of EMSs is less than the maximum
-        if current_num_ems < self.max_ems:
-            padding = np.zeros((self.max_ems - current_num_ems, 6), dtype=np.int32)
-            ems_array = np.concatenate([ems_array, padding], axis=0)
-        else:
-            ems_array = ems_array[:self.max_ems]
-
-        # Create an ems mask: 0 for valid EMSs and 1 for padding
-        ems_mask = [0] * current_num_ems + [1] * (self.max_ems - current_num_ems)
-        ems_mask = np.array(ems_mask, dtype=np.int8)
-
         self.action_mask = self.generate_action_mask()
-        
+
         return {
             'buffer': np.array(self.buffer, dtype=np.int32), # Size: (buffer_size, 3)
-            'ems_list': ems_array, # Size: (max_ems, 6)
-            'ems_mask': ems_mask, # Size: (max_ems,)
+            'ems_list': ems_array, # Size: (num_ems, 6)
             'action_mask': self.action_mask, # Size: (W, L, num_rotations, buffer_size)
         }
         

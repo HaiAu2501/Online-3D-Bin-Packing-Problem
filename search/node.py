@@ -1,108 +1,84 @@
-# search/node.py
-
-from __future__ import annotations
-
-import math
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 import numpy as np
-
-if TYPE_CHECKING:
-    from env.env import BinPacking3DEnv
+from typing import Tuple, Optional, Dict
+from env.env import BinPacking3DEnv
 
 class Node:
     def __init__(
         self,
-        state: BinPacking3DEnv,
-        parent: Optional[Node] = None,
+        env: BinPacking3DEnv,
+        parent: Optional['Node'] = None,
         action: Optional[Tuple[int, int, int, int]] = None,
-        prior_prob: float = 0.0
+        p: float = 0.0,
     ):
+        self.env: BinPacking3DEnv = env.clone()
+        self.parent: Optional[Node] = parent
+        self.action: Optional[Tuple[int, int, int, int]] = action # Hành động của node cha dẫn đến node này
+
+        self.children: Dict[Tuple[int, int, int, int], Node] = {} # Lưu trữ các node con
+        self.n: int = 0 # Số lượt node này được thăm
+        self.w: float = 0.0 # Tổng giá trị Q (phần thưởng) khi đi qua node này
+        self.p: float = p # Xác suất chọn node này (được tính từ policy network của node cha)
+
+    def is_leaf(self) -> bool:
         """
-        Initialize a node in the MCTS tree.
-
-        :param state: The current state of the environment.
-        :param parent: Parent node that leads to this state.
-        :param action: Action taken to reach this state.
-        :param prior_prob: Prior probability of selecting this node by using the policy network.
+        Kiểm tra xem node này có phải là node lá hay không.
         """
-        self.state: BinPacking3DEnv = state.clone()  # Use the clone method instead of deepcopy
-        self.parent: Node = parent
-        self.action = action
-        self.prior_prob: float = prior_prob
+        return len(self.children) == 0
 
-        self.children: Dict[Tuple[int, int, int, int], Node] = {}  # Mapping from actions to child nodes
-        self.visits: int = 0  # Number of times node has been visited
-        self.value: float = 0.0  # Accumulated value of the node
-        self.total_action_value: float = 0.0  # Accumulated value of the node's actions to estimate Q-value
-        self.is_terminal: bool = False  # Whether the node is a terminal state
-
-        self.untried_actions: List[Tuple[int, int, int, int]] = self.get_valid_actions()
-
-    def get_valid_actions(self) -> List[Tuple[int, int, int, int]]:
+    def get_ucb_score(self, c_puct: float = 1.0) -> float:
         """
-        Retrieve a list of valid actions from the current state.
+        Tính toán điểm số UCB của node.
 
-        :return: A list of valid actions represented as tuples.
+        :param c_puct: Hằng số khai thác.
         """
-        if self.is_terminal:
-            return []
+        if self.n == 0:
+            return float('inf')  # Ưu tiên các node chưa được thăm dò
+        return self.w / self.n + c_puct * self.p * (np.sqrt(self.parent.n) / (1 + self.n))
 
-        return self.state.valid_actions
-
-    def is_fully_expanded(self) -> bool:
+    def select_best_child(self, c_puct: float = 1.0) -> Tuple[Tuple[int, int, int, int], 'Node']:
         """
-        Check if all possible actions have been tried from this node.
+        Chọn node con có điểm số UCB cao nhất.
 
-        :return: True if fully expanded, False otherwise.
+        :param c_puct: Hằng số khai thác.
         """
-        return len(self.untried_actions) == 0
-
-    def best_child(self, c_param: float = math.sqrt(2)) -> Optional[Node]:
-        """
-        Select the best child node based on the UCB1 formula.
-
-        :param c_param: Exploration parameter.
-        :return: The child node with the highest UCB1 value.
-        """
-        best_score = - float('inf')
+        best_action = None
         best_child = None
+        best_score = -float('inf')
 
-        for child in self.children.values():
-            if child.visits == 0:
-                score = float('inf')  # Ưu tiên các node chưa thăm
-            else:
-                Q = child.total_action_value / child.visits  # Giá trị trung bình
-                U = c_param * child.prior_prob * math.sqrt(self.visits) / (1 + child.visits)  # Thành phần khám phá
-                score = Q + U
-
+        for action, child in self.children.items():
+            score = child.get_ucb_score(c_puct)
             if score > best_score:
                 best_score = score
+                best_action = action
                 best_child = child
 
-        return best_child
+        return best_action, best_child
 
-    def expand(self, action: Tuple[int, int, int, int], prior_prob: float) -> Optional[Node]:
+    def expand(self, policy: np.ndarray):
         """
-        Expand the node by adding a new child for an untried action.
+        Mở rộng node bằng cách tạo các node con dựa trên các hành động hợp lệ.
 
-        :param action: The action to create a new child node.
-        :param prior_prob: The prior probability of selecting this action.
-
-        :return: The newly created child node or None if no actions to try.
+        :param policy: Xác suất cho các hành động, đầu ra của policy network.
         """
-        new_state = self.state.clone()
-        new_state.step(action)  # Placeholder: Hàm này áp dụng hành động vào trạng thái
-        child_node = Node(state=new_state, parent=self, action=action, prior_prob=prior_prob)
-        self.children[action] = child_node
-        self.untried_actions.remove(action)
-        return child_node
+        obs, _ = self.env._get_observation()
+        action_mask = obs['action_mask']
+        valid_actions = np.argwhere(action_mask == 1)
 
-    def update(self, value: float):
+        for action in valid_actions:
+            x, y, rot, item_index = action
+            action_tuple = (x, y, rot, item_index)
+            
+            next_env = self.env.clone()
+            _, _, _, _, _ = next_env.step(action_tuple)
+            self.children[action_tuple] = Node(env=next_env, parent=self, action=action_tuple, p=policy[tuple(action)])
+
+    def backpropagate(self, value: float):
         """
-        Update the node's statistics based on the received reward.
+        Cập nhật giá trị của node và các node cha.
 
-        :param value: The value obtained from the simulation.
+        :param value: Giá trị trả về từ quá trình mô phỏng.
         """
-        self.visits += 1
-        self.total_action_value += value # Accumulate the reward
-
+        self.n += 1
+        self.w += value
+        if self.parent:
+            self.parent.backpropagate(value) # Truyền ngược giá trị lên node cha

@@ -1,136 +1,133 @@
-# search/mcts.py
-
-from __future__ import annotations
-
-import math
-from typing import Optional, Tuple, List, TYPE_CHECKING
 import numpy as np
-
-if TYPE_CHECKING:
-    from env.env import BinPacking3DEnv
-    from models.policy_net import PolicyNetwork
-    from models.value_net import ValueNetwork
-    from replay_buffer import PrioritizedReplayBuffer
-
+from typing import Tuple, Dict
 from .node import Node
+from env.env import BinPacking3DEnv
+from models.model import BinPackingModel
+import torch
+import random
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from .prb import PrioritizedReplayBuffer
 
 class MCTS:
     def __init__(
         self,
+        model: BinPackingModel,
         env: BinPacking3DEnv,
-        policy_net: PolicyNetwork,
-        value_net: ValueNetwork,
-        replay_buffer: PrioritizedReplayBuffer,
-        n_simulations: int = 1000,
-        c_param: float = math.sqrt(2),
-        verbose: bool = False
-    ) -> None:
+        replay_buffer: PrioritizedReplayBuffer = PrioritizedReplayBuffer(10000),
+        c_puct: float = 1.0,
+        n_simulations: int = 100,
+        num_parallel_simulations: int = 5,
+        device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    ):
+        self.model = model
+        self.env = env
+        self.replay_buffer = replay_buffer
+        self.c_puct = c_puct
+        self.n_simulations = n_simulations
+        self.num_parallel_simulations = num_parallel_simulations
+        self.device = device
+
+    def run(self, root_node: Node) -> Tuple[Tuple[int, int, int, int], Node]:
         """
-        Initialize the MCTS search.
+        Chạy thuật toán MCTS từ node gốc.
 
-        :param env: The environment to search in.
-        :param policy_net: The policy network to use for action selection.
-        :param value_net: The value network to use for state evaluation.
-        :param replay_buffer: The replay buffer to store the experience.
-        :param num_simulations: The number of simulations to run.
-        :param c_param: The exploration parameter for UCB1.
+        :param root_node: Node gốc.
+        :return: Hành động tốt nhất và node tương ứng.
         """
-        env.reset() # Reset the environment to the initial state
-        self.env: BinPacking3DEnv = env.clone()
-        self.policy_net: PolicyNetwork = policy_net
-        self.value_net: ValueNetwork = value_net
-        self.replay_buffer: PrioritizedReplayBuffer = replay_buffer
-        self.n_simulations: int = n_simulations
-        self.c_param: float = c_param
-        self.verbose: bool = verbose
+        for _ in range(self.n_simulations):
+            node = root_node
+            # 1. Selection
+            while not node.is_leaf():
+                _, node = node.select_best_child(self.c_puct)
 
-        # Root node of the MCTS tree is the initial state of the environment
-        self.root: Node = Node(state=self.env)
+            # 2. Expansion
+            obs, _ = node.env._get_observation()
+            buffer_tensor = torch.tensor(obs['buffer'], dtype=torch.float32).unsqueeze(0).to(self.device)
+            ems_list_tensor = torch.tensor(obs['ems_list'], dtype=torch.float32).unsqueeze(0).to(self.device)
+            action_mask_tensor = torch.tensor(obs['action_mask'], dtype=torch.float32).unsqueeze(0).to(self.device)
 
-    def search(self):
+            if not node.env.action_mask.any(): # Kiểm tra action_mask có toàn 0 không
+                # Nếu không có hành động hợp lệ, backpropagate giá trị từ value_net
+                value = self.model.get_value(ems_list_tensor, buffer_tensor).squeeze(0).cpu().detach().item()
+                node.backpropagate(value)
+                continue
+
+            _, policy = self.model(ems_list_tensor, buffer_tensor, action_mask_tensor)
+            policy = policy.squeeze(0).cpu().detach().numpy()
+            node.expand(policy)
+
+            # 3. Simulation (Leaf Parallelization)
+            selected_children = random.sample(list(node.children.values()), min(self.num_parallel_simulations, len(node.children)))
+
+            with ThreadPoolExecutor(max_workers=self.num_parallel_simulations) as executor:
+                futures = [executor.submit(self.simulate, child.env) for child in selected_children]
+                values = [future.result() for future in as_completed(futures)]
+
+            if values:
+                z = np.mean(values)
+                # Tính giá trị bằng cách tổ hợp giá trị với mạng Value
+                value_net = self.model.get_value(ems_list_tensor, buffer_tensor).squeeze(0).cpu().detach().item()
+                alpha = min(1.0, self.replay_buffer.frame / 100000)
+                value = alpha * value_net + (1 - alpha) * z
+
+                # 4. Backpropagation
+                node.backpropagate(value)
+
+        # Chọn hành động tốt nhất từ node gốc
+        best_action, best_child = root_node.select_best_child(c_puct=0) # Chọn node con có w/n cao nhất
+
+        # Lưu trữ dữ liệu vào Replay Buffer
+        obs, _ = root_node.env._get_observation()
+        next_obs, _ = best_child.env._get_observation()
+
+        # Tính value mục tiêu (target value)
+        target_value = 0
+        if not best_child.env.generate_action_mask().any() or all(item == (0, 0, 0) for item in best_child.env.buffer):
+            target_value = best_child.env.step(best_action)[1] # Lấy reward
+        else:
+            next_buffer_tensor = torch.tensor(next_obs['buffer'], dtype=torch.float32).unsqueeze(0).to(self.device)
+            next_ems_list_tensor = torch.tensor(next_obs['ems_list'], dtype=torch.float32).unsqueeze(0).to(self.device)
+            next_value = self.model.get_value(next_ems_list_tensor, next_buffer_tensor).squeeze(0).cpu().detach().item()
+            target_value = best_child.env.step(best_action)[1] + 0.95 * next_value # Lấy reward, gamma = 0.95
+
+        _, policy = self.model(ems_list_tensor, buffer_tensor, action_mask_tensor)
+        policy = policy.squeeze(0).cpu().detach().numpy()
+
+        value = self.model.get_value(ems_list_tensor, buffer_tensor).squeeze(0).cpu().detach().item()
+
+        self.replay_buffer.add(
+            state=obs,
+            action_mask=obs['action_mask'],
+            action=best_action,
+            reward=best_child.env.step(best_action)[1], # Lấy reward từ best_child
+            next_state=next_obs,
+            done=best_child.env.step(best_action)[2], # Lấy done từ best_child
+            value=value,
+            policy=policy
+        )
+
+        return best_action, best_child
+
+    def simulate(self, env: BinPacking3DEnv) -> float:
         """
-        The main search function to run the MCTS algorithm.
+        Mô phỏng một episode từ trạng thái hiện tại.
+
+        :param env: Môi trường hiện tại.
+        :return: Tổng phần thưởng của episode.
         """
-        for sim in range(self.n_simulations):
-            if self.verbose:
-                print(f"Simulation {sim + 1}/{self.n_simulations} started.")
+        done = False
+        total_reward = 0
+        while not done:
+            obs, _ = env._get_observation()
+            action_mask = obs['action_mask']
 
-            node: Node = self.root
-            path: List[BinPacking3DEnv] = [node]  # To keep track of the path for backpropagation
+            # Nếu không có hành động hợp lệ, kết thúc mô phỏng
+            if not action_mask.any():
+                break
 
-            # SELECTION 
-            # Traverse the tree until a node is found that can be expanded
-            while node.is_fully_expanded() and node.children:
-                node = node.best_child(self.c_param)
-                path.append(node)
-                if node.is_terminal:
-                    break  # Nếu node là terminal, kết thúc selection
+            valid_actions = np.argwhere(action_mask == 1)
+            action = tuple(valid_actions[np.random.choice(len(valid_actions))]) # Chọn ngẫu nhiên một hành động hợp lệ
 
-            # EXPANSION 
-            # If the node is not fully expanded and not terminal, expand it by adding a child
-            if not node.is_fully_expanded() and not node.is_terminal:
-                policy_probs = self.policy_net(node.state)  # Get the policy probabilities from the policy network
-                action, prior_prob = self._get_untried_action(node)  # Get an untried action from the node
-                child_node = Node(state=node.state, parent=node, action=action, prior_prob=prior_prob)
-                node.children[action] = child_node
-                path.append(child_node)
-                if child_node:
-                    path.append(child_node)
-                    node = child_node
-
-            # SIMULATION (ROLLOUT) 
-            # Perform a simulation from the node's state
-            total_reward, done = self._simulate(node.state)
-
-            # BACKPROPAGATION 
-            self._backpropagate(path, total_reward)
-
-            # COLLECT EXPERIENCE
-            self._store_experience(path, total_reward)
-
-    def _get_policy_probs(self, state: BinPacking3DEnv) -> Tuple[np.ndarray, float]:
-        """
-        Get the policy probabilities from the policy network for the given state.
-
-        :param state: The current state of the environment.
-        :return: A tuple containing the action and the prior probability of selecting the action.
-        """
-        pass    
-
-    def _get_untried_action(self, node: Node) -> Tuple[int, int, int, int]:
-        """
-        Get an untried action from the given node.
-
-        :param node: The current node in the MCTS tree.
-        :return: A tuple representing the action.
-        """
-        pass
-
-    def _simulate(self, state: BinPacking3DEnv) -> Tuple[float, bool]:
-        """
-        Perform a simulation (rollout) from the given state to estimate the value.
-
-        :param state: The current state of the environment.
-        :return: A tuple containing the total reward from the simulation and the done flag.
-        """
-
-    def _backpropagate(self, path: List[Node], reward: float):
-        """
-        Backpropagate the reward through the nodes from the given path to the root.
-
-        :param path: The list of nodes from root to the current node.
-        :param reward: The total reward from the simulation.
-        """
-        for node in path:
-            node.visits += 1
-            node.value += reward  # Accumulate the total reward from the simulation
-
-    def _store_experience(self, path: List[Node], reward: float):
-        """
-        Placeholder function to store the experience into the replay buffer.
-
-        :param path: The list of nodes from root to the current node.
-        :param reward: The total reward obtained from the simulation.
-        """
-        # TODO: Implement the logic to store the experience into the replay buffer
-        pass
+            _, reward, done, _, _ = env.step(action)
+            total_reward += reward
+        return total_reward
