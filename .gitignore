@@ -7,3 +7,4 @@ __pycache__/
 # Ignore data directories
 generator/data/
 train/data/
+venv/
