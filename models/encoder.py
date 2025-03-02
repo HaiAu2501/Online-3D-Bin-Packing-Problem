@@ -27,12 +27,11 @@ class HeightMapCNN(nn.Module):
         self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)
         self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1)
         
-        # Calculate output size after convolutions (assuming W and L are reasonably large)
-        conv_out_h = W
-        conv_out_w = L
+        # Use global average pooling to get fixed-size output regardless of input dimensions
+        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))
         
-        # Global average pooling + FC layer to get fixed output size
-        self.fc = nn.Linear(128 * conv_out_h * conv_out_w // 16, cnn_out_dim)
+        # FC layer to get fixed output size
+        self.fc = nn.Linear(128, cnn_out_dim)
         
     def forward(self, height_map: torch.Tensor) -> torch.Tensor:
         """Forward pass for height map.
@@ -57,6 +56,9 @@ class HeightMapCNN(nn.Module):
         x = F.relu(self.conv2(x))
         x = F.max_pool2d(x, 2)
         x = F.relu(self.conv3(x))
+        
+        # Apply global average pooling
+        x = self.global_pool(x)
         
         # Flatten and apply FC layer
         x = x.view(batch_size, -1)
@@ -84,13 +86,11 @@ class OccupancyMapCNN(nn.Module):
         self.conv3d_2 = nn.Conv3d(16, 32, kernel_size=3, padding=1)
         self.conv3d_3 = nn.Conv3d(32, 64, kernel_size=3, padding=1)
         
-        # Calculate output size after convolutions and pooling
-        conv_out_w = W // 4  # After two 2x2x2 3D max pooling
-        conv_out_l = L // 4
-        conv_out_h = H // 4
+        # Use global average pooling to get fixed-size output regardless of input dimensions
+        self.global_pool = nn.AdaptiveAvgPool3d((1, 1, 1))
         
-        # Global average pooling + FC layer to get fixed output size
-        self.fc = nn.Linear(64 * conv_out_w * conv_out_l * conv_out_h, cnn_out_dim)
+        # FC layer to get fixed output size
+        self.fc = nn.Linear(64, cnn_out_dim)
         
     def forward(self, occupancy_map: torch.Tensor) -> torch.Tensor:
         """Forward pass for occupancy map.
@@ -112,6 +112,9 @@ class OccupancyMapCNN(nn.Module):
         x = F.relu(self.conv3d_2(x))
         x = F.max_pool3d(x, 2)
         x = F.relu(self.conv3d_3(x))
+        
+        # Apply global average pooling
+        x = self.global_pool(x)
         
         # Flatten and apply FC layer
         x = x.view(batch_size, -1)

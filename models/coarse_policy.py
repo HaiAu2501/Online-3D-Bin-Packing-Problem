@@ -179,10 +179,11 @@ class CoarsePolicy(nn.Module):
             y_max: [batch_size] tensor of maximum y values
         """
         # Convert coarse indices to region boundaries
-        x_min = (coarse_x * self.delta_x).long()
-        y_min = (coarse_y * self.delta_y).long()
-        x_max = ((coarse_x + 1) * self.delta_x).long()
-        y_max = ((coarse_y + 1) * self.delta_y).long()
+        # Make sure to round to integers to avoid float values
+        x_min = (coarse_x.float() * self.delta_x).floor().long()
+        y_min = (coarse_y.float() * self.delta_y).floor().long()
+        x_max = ((coarse_x.float() + 1) * self.delta_x).ceil().long()
+        y_max = ((coarse_y.float() + 1) * self.delta_y).ceil().long()
         
         # Clamp to bin dimensions
         x_max = torch.clamp(x_max, max=self.W)

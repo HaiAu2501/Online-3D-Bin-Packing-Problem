@@ -402,7 +402,11 @@ class BinPackingEnv(gym.Env):
     
     def render(self):
         """Render the environment."""
-        return self._render_frame()
+        if self.render_mode == "ansi":
+            return self._render_frame()
+        else:  # human mode
+            self._render_frame()
+            return None
     
     def _render_frame(self):
         """Render a simple text representation of the environment."""
@@ -434,7 +438,7 @@ class BinPackingEnv(gym.Env):
             if w == 0 and l == 0 and h == 0:
                 output.append(f"{i}: Empty")
             else:
-                output.append(f"{i}: {w}×{l}×{h}")
+                output.append(f"{i}: {w} * {l} * {h}")
         
         # Join all lines into a single string
         rendered = "\n".join(output)
