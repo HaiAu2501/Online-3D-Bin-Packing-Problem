@@ -84,9 +84,9 @@ def create_coarse_mask(
 
 
 def create_fine_mask(
-    height_map: torch.Tensor,
-    item: torch.Tensor,
-    rotation: torch.Tensor,
+    height_map: torch.Tensor,  # [batch_size, W, L]
+    item: torch.Tensor,        # [batch_size, 3]
+    rotation: torch.Tensor,    # [batch_size]
     bin_size: Tuple[int, int, int],
     region_bounds: Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = None,
     min_support_ratio: float = 0.8
@@ -107,20 +107,8 @@ def create_fine_mask(
     batch_size, W, L = height_map.shape
     W_bin, L_bin, H_bin = bin_size
     
-    # Debug và đảm bảo kích thước item đúng
-    if item.dim() == 1:
-        # Nếu item chỉ có 1 chiều (3,) thay vì (batch_size, 3)
-        item = item.unsqueeze(0)  # Thêm chiều batch -> (1, 3)
-    
-    # Kiểm tra xem item có đúng 3 kích thước không
-    if item.size(-1) != 3:
-        # Xử lý trường hợp item không có đúng 3 kích thước
-        print(f"Warning: Item tensor does not have 3 dimensions. Shape: {item.shape}")
-        # Nếu chỉ có 1 tensor, giả định đó là cả w, l, h giống nhau
-        if item.size(-1) == 1:
-            # Tạo tensor mới với 3 kích thước giống nhau
-            dimension = item.view(-1)
-            item = torch.stack([dimension, dimension, dimension], dim=-1)
+    assert item.shape[0] == batch_size and item.shape[1] == 3, f"Item tensor must have shape [batch_size, 3], got {item.shape}"
+    assert rotation.shape[0] == batch_size, f"Rotation tensor must have shape [batch_size], got {rotation.shape}"
     
     # Initialize mask with all False
     mask = torch.zeros((batch_size, W, L), dtype=torch.bool, device=height_map.device)

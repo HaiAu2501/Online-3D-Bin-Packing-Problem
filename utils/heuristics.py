@@ -133,6 +133,8 @@ def greedy_search(
     
     # For each batch
     for b in range(batch_size):
+        # Ensure item has exactly 3 dimensions
+        assert items.shape[1] == 3, f"Items tensor must have shape [batch_size, 3], got {items.shape}"
         # Get item dimensions with rotation applied
         w, l, h = items[b].int().tolist()  # Convert to integers
         r = rotation[b].item()

@@ -157,6 +157,9 @@ class MetaNetwork(nn.Module):
         Returns:
             weights: [batch_size, 2] tensor of weights for [gradient, heuristic]
         """
+        assert grad_logits.shape == heur_logits.shape, \
+            f"grad_logits and heur_logits must have the same shape, got {grad_logits.shape} and {heur_logits.shape}"
+            
         batch_size = grad_logits.size(0)
         
         # Flatten logits for feature extraction
