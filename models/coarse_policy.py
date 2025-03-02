@@ -113,12 +113,16 @@ class CoarsePolicy(nn.Module):
     
     def get_candidate_region(
         self, 
-        coarse_probs: torch.Tensor
+        coarse_probs: torch.Tensor,
+        top_k: int = 3,
+        exploration_prob: float = 0.3
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Get candidate region based on coarse probabilities.
+        """Get candidate region based on coarse probabilities with exploration.
         
         Args:
             coarse_probs: [batch_size, buffer_size, 2, W_c, L_c] tensor of probabilities
+            top_k: Number of top candidates to consider
+            exploration_prob: Probability of choosing randomly from top-k instead of best
             
         Returns:
             batch_indices: [batch_size] tensor of batch indices
@@ -128,48 +132,68 @@ class CoarsePolicy(nn.Module):
             coarse_y: [batch_size] tensor of coarse y indices
         """
         batch_size = coarse_probs.size(0)
+        device = coarse_probs.device
         
         # Flatten the probability distribution
         flat_probs = coarse_probs.view(batch_size, -1)
         
-        # Get the indices of the maximum probability
-        flat_indices = torch.argmax(flat_probs, dim=1)
+        # Khởi tạo tensors để lưu kết quả
+        batch_indices = torch.arange(batch_size, device=device)
+        selected_items = torch.zeros(batch_size, dtype=torch.long, device=device)
+        selected_rotations = torch.zeros(batch_size, dtype=torch.long, device=device)
+        coarse_x = torch.zeros(batch_size, dtype=torch.long, device=device)
+        coarse_y = torch.zeros(batch_size, dtype=torch.long, device=device)
         
-        # Convert flat indices to multi-dimensional indices
-        # Calculate the number of elements in each dimension
+        # Lấy kích thước của từng chiều
         buffer_size = coarse_probs.size(1)
         rotations = coarse_probs.size(2)
         W_c = coarse_probs.size(3)
         L_c = coarse_probs.size(4)
-        
-        # Calculate indices for each dimension
         rot_x_y_size = rotations * W_c * L_c
         x_y_size = W_c * L_c
         
-        selected_items = (flat_indices // rot_x_y_size).long()
-        remainder = flat_indices % rot_x_y_size
-        
-        selected_rotations = (remainder // x_y_size).long()
-        remainder = remainder % x_y_size
-        
-        coarse_x = (remainder // L_c).long()
-        coarse_y = (remainder % L_c).long()
-        
-        # Create batch indices
-        batch_indices = torch.arange(batch_size, device=coarse_probs.device)
+        # Xử lý từng batch
+        for b in range(batch_size):
+            # Lấy top-k indices có xác suất cao nhất
+            if top_k > 1:
+                top_k_values, top_k_indices = torch.topk(flat_probs[b], min(top_k, flat_probs[b].size(0)))
+                
+                # Quyết định có thăm dò hay không
+                if torch.rand(1).item() < exploration_prob:
+                    # Thăm dò: chọn ngẫu nhiên từ top-k
+                    selected_idx = torch.multinomial(top_k_values, 1).item()
+                    flat_index = top_k_indices[selected_idx].item()
+                else:
+                    # Khai thác: chọn index tốt nhất
+                    flat_index = top_k_indices[0].item()
+            else:
+                # Luôn chọn index tốt nhất nếu top_k = 1
+                flat_index = torch.argmax(flat_probs[b]).item()
+            
+            # Chuyển đổi flat index thành chỉ số đa chiều
+            selected_items[b] = flat_index // rot_x_y_size
+            remainder = flat_index % rot_x_y_size
+            
+            selected_rotations[b] = remainder // x_y_size
+            remainder = remainder % x_y_size
+            
+            coarse_x[b] = remainder // L_c
+            coarse_y[b] = remainder % L_c
         
         return batch_indices, selected_items, selected_rotations, coarse_x, coarse_y
     
     def get_region_boundaries(
         self, 
         coarse_x: torch.Tensor, 
-        coarse_y: torch.Tensor
+        coarse_y: torch.Tensor,
+        expansion_factor: float = 0.1  # Tham số mới để mở rộng region
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Convert coarse grid indices to region boundaries.
+        """Convert coarse grid indices to region boundaries with optional expansion.
         
         Args:
             coarse_x: [batch_size] tensor of coarse x indices
             coarse_y: [batch_size] tensor of coarse y indices
+            expansion_factor: Factor to expand region boundaries (default: 0.1)
             
         Returns:
             x_min: [batch_size] tensor of minimum x values
@@ -177,17 +201,28 @@ class CoarsePolicy(nn.Module):
             x_max: [batch_size] tensor of maximum x values
             y_max: [batch_size] tensor of maximum y values
         """
-        # Convert coarse indices to region boundaries
-        # Make sure to round to integers to avoid float values
-        x_min = (coarse_x.float() * self.delta_x).floor().long()
-        y_min = (coarse_y.float() * self.delta_y).floor().long()
-        x_max = ((coarse_x.float() + 1) * self.delta_x).ceil().long()
-        y_max = ((coarse_y.float() + 1) * self.delta_y).ceil().long()
+        # Tính toán kích thước cơ bản của region
+        x_min_base = (coarse_x.float() * self.delta_x).floor()
+        y_min_base = (coarse_y.float() * self.delta_y).floor()
+        x_max_base = ((coarse_x.float() + 1) * self.delta_x).ceil()
+        y_max_base = ((coarse_y.float() + 1) * self.delta_y).ceil()
         
-        # Clamp to bin dimensions
+        # Tính toán độ mở rộng
+        x_expand = (x_max_base - x_min_base) * expansion_factor
+        y_expand = (y_max_base - y_min_base) * expansion_factor
+        
+        # Áp dụng mở rộng và chuyển đổi sang kiểu long
+        x_min = (x_min_base - x_expand).floor().long()
+        y_min = (y_min_base - y_expand).floor().long()
+        x_max = (x_max_base + x_expand).ceil().long()
+        y_max = (y_max_base + y_expand).ceil().long()
+        
+        # Kiểm tra giới hạn để đảm bảo trong phạm vi bin
+        x_min = torch.clamp(x_min, min=0)
+        y_min = torch.clamp(y_min, min=0)
         x_max = torch.clamp(x_max, max=self.W)
         y_max = torch.clamp(y_max, max=self.L)
-        
+    
         return x_min, y_min, x_max, y_max
     
     def get_feature_maps(self) -> Dict[str, torch.Tensor]:

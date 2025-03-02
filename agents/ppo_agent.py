@@ -129,16 +129,19 @@ class PPOMemory:
 
 
 class DynamicHyperparameters:
-    """Handler for dynamic hyperparameters adjustment."""
+    """Handler for dynamic hyperparameters adjustment with adaptive decay."""
     
     def __init__(
         self,
-        alpha_init: float = 0.5,
-        beta_init: float = 0.5,
+        alpha_init: float = 0.7,       # Điều chỉnh giá trị khởi tạo
+        beta_init: float = 0.3,        # Điều chỉnh giá trị khởi tạo
         lambda_init: float = 0.3,
-        decay_factor: float = 0.995,
-        min_value: float = 0.05,
-        max_value: float = 0.95
+        base_decay_factor: float = 0.995,
+        min_value: float = 0.1,        # Tăng giá trị tối thiểu
+        max_value: float = 0.9,
+        reward_threshold: float = 0.02, # Ngưỡng phát hiện xu hướng reward
+        violation_threshold: float = 0.01, # Ngưỡng phát hiện xu hướng vi phạm
+        adaptive_factor: float = 0.2   # Hệ số điều chỉnh adaptive
     ):
         """Initialize dynamic hyperparameters.
         
@@ -146,54 +149,97 @@ class DynamicHyperparameters:
             alpha_init: Initial value for volume utilization weight
             beta_init: Initial value for support constraint weight
             lambda_init: Initial value for constraint loss weight
-            decay_factor: Decay factor for parameter adjustment
+            base_decay_factor: Base decay factor for parameter adjustment
             min_value: Minimum value for parameters
             max_value: Maximum value for parameters
+            reward_threshold: Threshold for detecting reward trends
+            violation_threshold: Threshold for detecting violation trends
+            adaptive_factor: Factor for adapting decay rate based on trend magnitudes
         """
         self.alpha = alpha_init
         self.beta = beta_init
         self.lambda_val = lambda_init
-        self.decay_factor = decay_factor
+        self.base_decay_factor = base_decay_factor
         self.min_value = min_value
         self.max_value = max_value
+        self.reward_threshold = reward_threshold
+        self.violation_threshold = violation_threshold
+        self.adaptive_factor = adaptive_factor
         
         # Performance tracking
         self.reward_history = deque(maxlen=100)
         self.constraint_violation_history = deque(maxlen=100)
+        
+        # Tracking episode count
+        self.episode_count = 0
+        
+        # Lambda schedule để tăng dần ảnh hưởng của constraint loss
+        self.lambda_schedule = {
+            100: 0.4,
+            300: 0.5,
+            600: 0.6,
+            1000: 0.7
+        }
     
     def update(self, avg_reward: float, constraint_violations: float):
-        """Update hyperparameters based on performance.
+        """Update hyperparameters based on performance with adaptive decay.
         
         Args:
             avg_reward: Average reward in recent episodes
             constraint_violations: Average constraint violations in recent episodes
         """
+        # Tăng episode counter
+        self.episode_count += 1
+        
+        # Kiểm tra schedule lambda
+        if self.episode_count in self.lambda_schedule:
+            self.lambda_val = self.lambda_schedule[self.episode_count]
+        
         # Store metrics
         self.reward_history.append(avg_reward)
         self.constraint_violation_history.append(constraint_violations)
         
         # Skip update if not enough history
-        if len(self.reward_history) < 10:
+        if len(self.reward_history) < 20:  # Tăng lên để có đánh giá xu hướng tốt hơn
             return
         
-        # Calculate trends
-        reward_trend = np.mean(list(self.reward_history)[-10:]) - np.mean(list(self.reward_history)[:-10])
-        violation_trend = np.mean(list(self.constraint_violation_history)[-10:]) - np.mean(list(self.constraint_violation_history)[:-10])
+        # Calculate trends using kỹ thuật moving average
+        recent_rewards = list(self.reward_history)[-20:]
+        older_rewards = list(self.reward_history)[-40:-20]
+        reward_trend = np.mean(recent_rewards) - np.mean(older_rewards)
+        
+        recent_violations = list(self.constraint_violation_history)[-20:]
+        older_violations = list(self.constraint_violation_history)[-40:-20]
+        violation_trend = np.mean(recent_violations) - np.mean(older_violations)
+        
+        # Tính toán adaptive decay dựa trên độ lớn của xu hướng
+        reward_magnitude = min(1.0, abs(reward_trend) / 0.1)  # Chuẩn hóa magnitude
+        violation_magnitude = min(1.0, abs(violation_trend) / 0.05)  # Chuẩn hóa magnitude
+        
+        # Decay factor thích ứng
+        alpha_decay = self.base_decay_factor ** (1 + self.adaptive_factor * reward_magnitude)
+        beta_decay = self.base_decay_factor ** (1 + self.adaptive_factor * violation_magnitude)
         
         # Adjust alpha and beta based on performance
-        if violation_trend > 0.01:  # Constraint violations increasing
+        if violation_trend > self.violation_threshold:  # Constraint violations increasing
             # Decrease alpha (care less about volume) and increase beta (care more about constraints)
-            self.alpha *= self.decay_factor
-            self.beta /= self.decay_factor
-            self.lambda_val /= self.decay_factor
-        elif reward_trend < -0.01:  # Rewards decreasing
+            self.alpha *= alpha_decay
+            self.beta /= beta_decay
+            # Tăng lambda để phạt vi phạm nặng hơn
+            self.lambda_val = min(self.max_value, self.lambda_val * 1.1)
+        elif reward_trend < -self.reward_threshold:  # Rewards decreasing
             # Increase alpha (care more about volume) and decrease beta slightly
-            self.alpha /= self.decay_factor
-            self.beta *= self.decay_factor**0.5  # Decrease beta more slowly
+            self.alpha /= alpha_decay
+            self.beta *= beta_decay**0.7  # Decrease beta more slowly
         else:
-            # Small adjustment to maintain exploration
-            self.alpha *= self.decay_factor**0.1
-            self.beta *= self.decay_factor**0.1
+            # Thêm logic điều chỉnh cho trường hợp cả hai xu hướng tốt
+            if reward_trend > self.reward_threshold and violation_trend < -self.violation_threshold:
+                # Cả hai đều đang tốt, giữ nguyên giá trị
+                pass
+            else:
+                # Điều chỉnh nhẹ cho thăm dò
+                self.alpha *= self.base_decay_factor**0.05
+                self.beta *= self.base_decay_factor**0.05
         
         # Enforce bounds
         self.alpha = np.clip(self.alpha, self.min_value, self.max_value)
@@ -459,7 +505,7 @@ class PPOAgent:
         return action, action_prob, z_t, debug_info
     
     def train_networks(self) -> Dict[str, float]:
-        """Train policy and value networks using collected experience.
+        """Train policy and value networks using collected experience with improved gradient clipping.
         
         Returns:
             Dictionary of training metrics
@@ -474,13 +520,19 @@ class PPOAgent:
             'entropy': 0,
             'kl_div': 0,
             'constraint_loss': 0,
-            'total_loss': 0
+            'total_loss': 0,
+            'grad_norm': 0
         }
         
         # Get hyperparameters
         hyperparams = self.dynamic_hyperparams.get_values() if self.use_dynamic_hyperparams else {
             'alpha': 0.7, 'beta': 0.3, 'lambda': 0.1
         }
+        
+        # Thêm kiểm soát learning rate điều chỉnh tự động
+        current_lr = 0
+        for param_group in self.encoder_optimizer.param_groups:
+            current_lr = param_group['lr']
         
         # Training loop
         for epoch in range(self.n_epochs):
@@ -680,13 +732,18 @@ class PPOAgent:
                 total_loss.backward()
                 
                 # Clip gradients
-                for optimizer in [self.encoder_optimizer, self.coarse_policy_optimizer, 
-                                 self.fine_policy_optimizer, self.meta_network_optimizer,
-                                 self.value_network_optimizer]:
-                    torch.nn.utils.clip_grad_norm_(
-                        [p for group in optimizer.param_groups for p in group['params']], 
-                        self.max_grad_norm
-                    )
+                all_params = []
+                for model in [self.encoder, self.coarse_policy, self.fine_policy, 
+                            self.meta_network, self.value_network]:
+                    all_params.extend(list(model.parameters()))
+                
+                # Tính toán tổng gradient norm trước khi clip
+                total_norm = torch.norm(torch.stack([torch.norm(p.grad.detach(), 2) 
+                                                for p in all_params if p.grad is not None]), 2)
+                epoch_metrics['grad_norm'] += total_norm.item()
+                
+                # Thực hiện gradient clipping với các parameter toàn cục
+                torch.nn.utils.clip_grad_norm_(all_params, self.max_grad_norm)
                 
                 # Update networks
                 self.encoder_optimizer.step()
@@ -702,6 +759,31 @@ class PPOAgent:
                 epoch_metrics['kl_div'] += kl_div.item()
                 epoch_metrics['constraint_loss'] += constraint_loss.item()
                 epoch_metrics['total_loss'] += total_loss.item()
+
+            # Sau epoch, kiểm tra grad_norm để điều chỉnh learning rate tự động
+            avg_grad_norm = epoch_metrics['grad_norm'] / len(batches)
+            
+            # Nếu gradient quá lớn, giảm learning rate
+            if avg_grad_norm > self.max_grad_norm * 2:
+                new_lr = current_lr * 0.8
+                for optimizer in [self.encoder_optimizer, self.coarse_policy_optimizer,
+                                self.fine_policy_optimizer, self.meta_network_optimizer,
+                                self.value_network_optimizer]:
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = new_lr
+                if self.logger:
+                    self.logger.log_scalar('lr', new_lr, self.step_counter)
+            
+            # Nếu gradient quá nhỏ, tăng learning rate
+            elif avg_grad_norm < self.max_grad_norm * 0.1 and epoch > 0:
+                new_lr = current_lr * 1.2
+                for optimizer in [self.encoder_optimizer, self.coarse_policy_optimizer,
+                                self.fine_policy_optimizer, self.meta_network_optimizer,
+                                self.value_network_optimizer]:
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = new_lr
+                if self.logger:
+                    self.logger.log_scalar('lr', new_lr, self.step_counter)
             
             # Average epoch metrics
             for key in epoch_metrics:
@@ -715,7 +797,7 @@ class PPOAgent:
             if epoch_metrics['kl_div'] > 1.5 * self.target_kl:
                 print(f"Early stopping at epoch {epoch+1}/{self.n_epochs} due to high KL divergence")
                 break
-        
+
         # Clear memory
         self.memory.clear()
         
