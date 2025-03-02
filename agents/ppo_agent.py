@@ -563,7 +563,7 @@ class PPOAgent:
                         'y_min': torch.tensor([y_min], device=self.device),
                         'x_max': torch.tensor([x_max], device=self.device),
                         'y_max': torch.tensor([y_max], device=self.device),
-                        'items': obs['buffer'][0, b].unsqueeze(0)  # Đảm bảo shape là [1, 3]
+                        'items': obs['buffer'][0, b].view(1, 3)
                     }
                     
                     # Create fine mask
