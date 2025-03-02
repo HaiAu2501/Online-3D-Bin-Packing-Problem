@@ -185,7 +185,6 @@ def compute_objective_function(
     
     return objective
 
-
 def apply_gradient_update(
     logits: torch.Tensor,
     probs: torch.Tensor,
@@ -201,10 +200,7 @@ def apply_gradient_update(
     learning_rate: float = 0.01,
     num_iterations: int = 10
 ) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Apply gradient updates to refine logits.
-    
-    For the demo, we'll use a simplified version that doesn't require gradient computation.
-    Instead, we'll adjust the logits based on a heuristic approach.
+    """Apply gradient updates to refine logits using actual gradient descent.
     
     Args:
         logits: [batch_size, W, L] tensor of initial logits
@@ -226,8 +222,8 @@ def apply_gradient_update(
     batch_size, W, L = logits.shape
     device = logits.device
     
-    # Create a copy of logits
-    refined_logits = logits.clone().detach()
+    # Create a copy of logits that requires gradients for optimization
+    refined_logits = logits.clone().detach().requires_grad_(True)
     
     # If region bounds are provided, limit the search to those regions
     if region_bounds is not None:
@@ -239,77 +235,84 @@ def apply_gradient_update(
         x_max = torch.full((batch_size,), W, dtype=torch.long, device=device)
         y_max = torch.full((batch_size,), L, dtype=torch.long, device=device)
     
-    # For each batch, find the best position based on objective function
-    for b in range(batch_size):
-        # Get item dimensions
-        w, l, h = item_dims[b].int().tolist()
-        r = rotation[b].item()
-        
-        # Apply rotation
-        if r == 0:
-            w_r, l_r = w, l
-        else:
-            w_r, l_r = l, w
-        
-        # Get region bounds as integers
-        x_min_val = int(x_min[b].item())
-        y_min_val = int(y_min[b].item())
-        x_max_val = int(min(x_max[b].item(), W - w_r + 1))
-        y_max_val = int(min(y_max[b].item(), L - l_r + 1))
-        
-        # Find the best position based on objective function
-        best_x, best_y = -1, -1
-        best_score = float('-inf')
-        
-        for x in range(x_min_val, x_max_val):
-            for y in range(y_min_val, y_max_val):
-                # Skip invalid positions
-                if valid_mask is not None and not valid_mask[b, x, y]:
-                    continue
-                
-                # Calculate objective function for this position
-                position = torch.tensor([[x, y]], device=device)
-                obj_value = compute_objective_function(
-                    height_map[b:b+1],
-                    item_dims[b:b+1],
-                    rotation[b:b+1],
-                    position,
-                    bin_size,
-                    alpha_t,
-                    beta_t,
-                    gamma
-                )
-                
-                # Update best position if better
-                score = obj_value.item()
-                if score > best_score:
-                    best_score = score
-                    best_x, best_y = x, y
-        
-        # Boost the logits for the best position
-        if best_x >= 0 and best_y >= 0:
-            # Set the logits for the best position to a high value
-            # and set other positions to low values
-            mask = torch.ones_like(refined_logits[b], dtype=torch.bool)
-            mask[best_x, best_y] = False
-            
-            # Apply the mask
-            refined_logits[b] = torch.where(
-                mask, 
-                torch.full_like(refined_logits[b], -1e9),
-                torch.full_like(refined_logits[b], 10.0)
-            )
+    # Create optimizer for the logits
+    optimizer = torch.optim.Adam([refined_logits], lr=learning_rate)
     
-    # Calculate final probabilities
+    # Perform gradient descent iterations
+    for iteration in range(num_iterations):
+        optimizer.zero_grad()
+        
+        # Calculate probabilities with masking
+        if valid_mask is not None:
+            masked_logits = torch.where(
+                valid_mask,
+                refined_logits,
+                torch.tensor(-1e9, device=device, dtype=refined_logits.dtype)
+            )
+        else:
+            masked_logits = refined_logits
+            
+        probs = torch.softmax(masked_logits.view(batch_size, -1), dim=1).view(batch_size, W, L)
+        
+        # Calculate loss (negative objective function to maximize it)
+        total_loss = torch.zeros(1, device=device)
+        
+        for b in range(batch_size):
+            # Get item dimensions
+            w, l, h = item_dims[b]
+            r = rotation[b]
+            
+            # Apply rotation
+            w_r = w if r == 0 else l
+            l_r = l if r == 0 else w
+            
+            # Get region bounds as integers
+            x_min_val = max(0, int(x_min[b].item()))
+            y_min_val = max(0, int(y_min[b].item()))
+            x_max_val = min(int(x_max[b].item()), W - w_r.int() + 1)
+            y_max_val = min(int(y_max[b].item()), L - l_r.int() + 1)
+            
+            # For each valid position in the region
+            for x in range(x_min_val, x_max_val):
+                for y in range(y_min_val, y_max_val):
+                    # Skip invalid positions
+                    if valid_mask is not None and not valid_mask[b, x, y]:
+                        continue
+                    
+                    # Calculate objective function for this position
+                    position = torch.tensor([[x, y]], device=device)
+                    obj_value = compute_objective_function(
+                        height_map[b:b+1],
+                        item_dims[b:b+1].unsqueeze(0),
+                        rotation[b:b+1].unsqueeze(0),
+                        position,
+                        bin_size,
+                        alpha_t,
+                        beta_t,
+                        gamma
+                    )
+                    
+                    # Add weighted objective to the loss (negative for maximization)
+                    # This follows the gradient update formula in the algorithm flow
+                    total_loss = total_loss - probs[b, x, y] * obj_value
+        
+        # Backpropagate to compute gradients
+        total_loss.backward()
+        
+        # Update logits using computed gradients
+        optimizer.step()
+    
+    # Make sure logits respect the mask for the final output
     if valid_mask is not None:
-        masked_logits = torch.where(
+        refined_logits = torch.where(
             valid_mask,
-            refined_logits,
+            refined_logits.detach(),
             torch.tensor(-1e9, device=device, dtype=refined_logits.dtype)
         )
     else:
-        masked_logits = refined_logits
+        refined_logits = refined_logits.detach()
     
-    refined_probs = torch.softmax(masked_logits.view(batch_size, -1), dim=1).view(batch_size, W, L)
+    # Calculate final probabilities
+    refined_probs = torch.softmax(refined_logits.view(batch_size, -1), dim=1).view(batch_size, W, L)
     
     return refined_logits, refined_probs
