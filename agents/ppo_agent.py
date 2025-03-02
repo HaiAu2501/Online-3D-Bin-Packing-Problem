@@ -133,9 +133,9 @@ class DynamicHyperparameters:
     
     def __init__(
         self,
-        alpha_init: float = 0.7,
-        beta_init: float = 0.3,
-        lambda_init: float = 0.1,
+        alpha_init: float = 0.5,
+        beta_init: float = 0.5,
+        lambda_init: float = 0.3,
         decay_factor: float = 0.995,
         min_value: float = 0.05,
         max_value: float = 0.95
@@ -230,18 +230,18 @@ class PPOAgent:
         meta_network: MetaNetwork,
         coarse_grid_size: Tuple[int, int] = (5, 5),
         device: torch.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu'),
-        lr: float = 3e-4,
+        lr: float = 1e-4,
         gamma: float = 0.99,
         gae_lambda: float = 0.95,
-        policy_clip: float = 0.2,
+        policy_clip: float = 0.1,
         value_clip: float = 0.2,
         n_epochs: int = 4,
-        batch_size: int = 128,
-        mini_batch_size: int = 32,
+        batch_size: int = 256,
+        mini_batch_size: int = 64,
         entropy_coef: float = 0.01,
         value_coef: float = 0.5,
-        max_grad_norm: float = 0.5,
-        target_kl: float = 0.015,
+        max_grad_norm: float = 0.3,
+        target_kl: float = 0.03,
         use_dynamic_hyperparams: bool = True,
         logger: Optional[Logger] = None
     ):
@@ -569,7 +569,7 @@ class PPOAgent:
                     # Create fine mask
                     fine_mask = create_fine_mask(
                         obs['height_map'],
-                        region_data['items'].unsqueeze(0),
+                        region_data['items'],
                         region_data['rotation'],
                         self.bin_size,
                         (region_data['x_min'], region_data['y_min'], 
@@ -611,7 +611,7 @@ class PPOAgent:
                     position = torch.tensor([[x, y]], device=self.device)
                     support_ratio = compute_support_ratio(
                         obs['height_map'],
-                        region_data['items'].unsqueeze(0),
+                        region_data['items'],
                         region_data['rotation'],
                         position
                     )[0]

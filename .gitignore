@@ -8,3 +8,7 @@ __pycache__/
 generator/data/
 train/data/
 venv/
+
+# Ingnore model directories
+logs/
+saved_models/
