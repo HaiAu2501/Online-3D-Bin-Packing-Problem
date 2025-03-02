@@ -107,6 +107,21 @@ def create_fine_mask(
     batch_size, W, L = height_map.shape
     W_bin, L_bin, H_bin = bin_size
     
+    # Debug và đảm bảo kích thước item đúng
+    if item.dim() == 1:
+        # Nếu item chỉ có 1 chiều (3,) thay vì (batch_size, 3)
+        item = item.unsqueeze(0)  # Thêm chiều batch -> (1, 3)
+    
+    # Kiểm tra xem item có đúng 3 kích thước không
+    if item.size(-1) != 3:
+        # Xử lý trường hợp item không có đúng 3 kích thước
+        print(f"Warning: Item tensor does not have 3 dimensions. Shape: {item.shape}")
+        # Nếu chỉ có 1 tensor, giả định đó là cả w, l, h giống nhau
+        if item.size(-1) == 1:
+            # Tạo tensor mới với 3 kích thước giống nhau
+            dimension = item.view(-1)
+            item = torch.stack([dimension, dimension, dimension], dim=-1)
+    
     # Initialize mask with all False
     mask = torch.zeros((batch_size, W, L), dtype=torch.bool, device=height_map.device)
     
@@ -122,50 +137,71 @@ def create_fine_mask(
     
     # For each batch
     for b in range(batch_size):
-        # Get item dimensions
-        w, l, h = item[b].int().tolist()  # Convert tensor to integers
-        r = rotation[b].item()  # Get integer value
-        
-        # Apply rotation if needed
-        if r == 0:
-            w_r, l_r = w, l
-        else:
-            w_r, l_r = l, w
-        
-        # Get region bounds as integers
-        x_min_val = x_min[b].item()
-        y_min_val = y_min[b].item()
-        x_max_val = min(x_max[b].item(), W_bin - w_r + 1)
-        y_max_val = min(y_max[b].item(), L_bin - l_r + 1)
-        
-        # For each position in the region
-        for x in range(x_min_val, x_max_val):
-            for y in range(y_min_val, y_max_val):
-                # Check height constraints
-                region_heights = height_map[b, x:x+w_r, y:y+l_r]
+        try:
+            # Lấy an toàn kích thước vật phẩm
+            if item.size(0) <= b:
+                # Nếu batch index vượt quá số lượng item, sử dụng item đầu tiên
+                current_item = item[0]
+            else:
+                current_item = item[b]
                 
-                # Skip if region is not valid
-                if region_heights.numel() == 0:
-                    continue
+            # Convert tensor to list of integers
+            if current_item.dim() > 0 and current_item.size(0) >= 3:
+                w, l, h = current_item.int().tolist()[:3]  # Lấy 3 giá trị đầu tiên
+            else:
+                # Fallback nếu vẫn không có đủ kích thước
+                print(f"Warning: Cannot extract dimensions from item. Using default [1,1,1]")
+                w, l, h = 1, 1, 1
+                
+            r = rotation[b].item() if b < rotation.size(0) else 0  # Default rotation = 0
+            
+            # Apply rotation if needed
+            if r == 0:
+                w_r, l_r = w, l
+            else:
+                w_r, l_r = l, w
+            
+            # Get region bounds as integers
+            x_min_val = int(x_min[b].item() if b < x_min.size(0) else 0)
+            y_min_val = int(y_min[b].item() if b < y_min.size(0) else 0)
+            x_max_val = int(min(x_max[b].item() if b < x_max.size(0) else W_bin, W_bin - w_r + 1))
+            y_max_val = int(min(y_max[b].item() if b < y_max.size(0) else L_bin, L_bin - l_r + 1))
+            
+            # For each position in the region
+            for x in range(x_min_val, x_max_val):
+                for y in range(y_min_val, y_max_val):
+                    # Check height constraints
+                    region_heights = height_map[b, x:x+w_r, y:y+l_r]
                     
-                max_height = torch.max(region_heights)
-                
-                # Check if item fits within height constraints
-                if max_height + h > H_bin:
-                    continue
-                
-                # Calculate support ratio
-                # Count positions where height equals max_height (supporting surface)
-                if max_height > 0:  # Only check support for non-ground placements
-                    support_area = torch.sum(region_heights == max_height).item()
-                    total_area = w_r * l_r
-                    support_ratio = support_area / total_area
-                    
-                    # Check if support ratio is sufficient
-                    if support_ratio < min_support_ratio:
+                    # Skip if region is not valid
+                    if region_heights.numel() == 0:
                         continue
-                
-                # If all constraints are satisfied, mark as valid
-                mask[b, x, y] = True
+                        
+                    max_height = torch.max(region_heights)
+                    
+                    # Check if item fits within height constraints
+                    if max_height + h > H_bin:
+                        continue
+                    
+                    # Calculate support ratio
+                    # Count positions where height equals max_height (supporting surface)
+                    if max_height > 0:  # Only check support for non-ground placements
+                        support_area = torch.sum(region_heights == max_height).item()
+                        total_area = w_r * l_r
+                        support_ratio = support_area / total_area
+                        
+                        # Check if support ratio is sufficient
+                        if support_ratio < min_support_ratio:
+                            continue
+                    
+                    # If all constraints are satisfied, mark as valid
+                    mask[b, x, y] = True
+                    
+        except Exception as e:
+            print(f"Error processing batch {b}: {e}")
+            print(f"Item shape: {item.shape}, Rotation shape: {rotation.shape}")
+            print(f"Region bounds shapes: x_min={x_min.shape}, y_min={y_min.shape}, x_max={x_max.shape}, y_max={y_max.shape}")
+            # Continue with the next batch instead of crashing
+            continue
     
     return mask

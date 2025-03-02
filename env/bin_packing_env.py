@@ -56,6 +56,9 @@ class BinPackingEnv(gym.Env):
         if self.item_list:
             for item in self.item_list:
                 max_item_size = max(max_item_size, max(item))
+
+        # Thêm max_items dựa trên độ dài của item_list
+        self.max_items = len(self.item_list) if self.item_list else 0
         
         # Define action spaces
         self.action_space = spaces.MultiDiscrete([
@@ -111,6 +114,7 @@ class BinPackingEnv(gym.Env):
             item_list: List of items, each with dimensions [w, l, h]
         """
         self.item_list = item_list.copy()
+        self.max_items = len(self.item_list)
     
     def _refill_buffer(self):
         """Refill the buffer with items from the remaining items queue.
@@ -294,6 +298,7 @@ class BinPackingEnv(gym.Env):
         # Process options if provided
         if options and 'item_list' in options:
             self.item_list = options['item_list']
+            self.max_items = len(self.item_list)
             
         # Check if item_list is available
         if not self.item_list:

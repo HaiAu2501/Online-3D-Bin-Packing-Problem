@@ -1,7 +1,3 @@
-from gymnasium.envs.registration import register
+from .bin_packing_env import BinPackingEnv
 
-register(
-    id='BinPacking3D-v0',
-    entry_point='env.bin_packing_env:BinPackingEnv',
-    max_episode_steps=1000,
-)
+__all__ = ['BinPackingEnv']

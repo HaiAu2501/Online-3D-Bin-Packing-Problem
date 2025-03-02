@@ -2,24 +2,13 @@ import torch
 import numpy as np
 from typing import Dict, Tuple, List, Optional, Union
 
-
 def compute_support_ratio(
     height_map: torch.Tensor,
     item_dims: torch.Tensor,
     rotation: torch.Tensor,
     position: torch.Tensor
 ) -> torch.Tensor:
-    """Compute the support ratio for items at given positions.
-    
-    Args:
-        height_map: [batch_size, W, L] tensor of height map
-        item_dims: [batch_size, 3] tensor of item dimensions (w, l, h)
-        rotation: [batch_size] tensor of rotation indices (0 or 1)
-        position: [batch_size, 2] tensor of (x, y) positions
-        
-    Returns:
-        [batch_size] tensor of support ratios
-    """
+    """Compute the support ratio for items at given positions."""
     batch_size = height_map.size(0)
     device = height_map.device
     
@@ -34,40 +23,46 @@ def compute_support_ratio(
     # Extract positions
     x = position[:, 0]
     y = position[:, 1]
-    
+ 
     # Initialize support ratios
     support_ratios = torch.zeros(batch_size, device=device)
     
     # For each item in the batch
     for b in range(batch_size):
-        # Get region under the item - convert all indices to integers
-        x_start = int(x[b].item())
-        y_start = int(y[b].item())
-        w_r = int(w_rotated[b].item())
-        l_r = int(l_rotated[b].item())
-        
-        # Check boundaries
-        if x_start < 0 or y_start < 0 or x_start + w_r > height_map.size(1) or y_start + l_r > height_map.size(2):
-            support_ratios[b] = 0
-            continue
-        
-        region = height_map[b, x_start:x_start+w_r, y_start:y_start+l_r]
-        
-        # Find maximum height in the region (support height)
-        max_height = torch.max(region)
-        
-        # For ground level, support is 100%
-        if max_height == 0:
-            support_ratios[b] = 1.0
-            continue
-        
-        # Calculate number of points at max height (supporting surface)
-        support_area = torch.sum(region == max_height).float()
-        total_area = w_r * l_r
-        
-        # Calculate support ratio
-        support_ratios[b] = support_area / total_area
-    
+        try:
+            x_start = int(x[b].item())
+            y_start = int(y[b].item())
+            w_r = int(w_rotated[b].item())
+            l_r = int(l_rotated[b].item())
+            
+            # Check boundaries
+            if x_start < 0 or y_start < 0 or x_start + w_r > height_map.size(1) or y_start + l_r > height_map.size(2):
+                print(f"Out of boundaries: ({x_start},{y_start}) with size ({w_r},{l_r}) exceeds ({height_map.size(1)},{height_map.size(2)})")
+                support_ratios[b] = 0
+                continue
+            
+            region = height_map[b, x_start:x_start+w_r, y_start:y_start+l_r]
+            print(f"Region shape: {region.shape}")
+            
+            # Find maximum height in the region (support height)
+            max_height = torch.max(region)
+            
+            # For ground level, support is 100%
+            if max_height == 0:
+                support_ratios[b] = 1.0
+                continue
+            
+            # Calculate number of points at max height (supporting surface)
+            support_area = torch.sum(region == max_height).float()
+            total_area = w_r * l_r
+            
+            # Calculate support ratio
+            support_ratios[b] = support_area / total_area
+            print(f"Support ratio: {support_ratios[b].item()}")
+            
+        except Exception as e:
+            print(f"Error processing batch {b} in compute_support_ratio: {e}")
+            support_ratios[b] = 0.0
     return support_ratios
 
 
