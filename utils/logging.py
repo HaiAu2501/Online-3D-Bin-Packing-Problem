@@ -7,7 +7,6 @@ import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 import json
 
-
 class Logger:
     """Logger for tracking and saving training metrics and statistics."""
     
@@ -258,7 +257,6 @@ class Logger:
         # Close TensorBoard writer if used
         if self.use_tensorboard:
             self.writer.close()
-
 
 class VisualLogger:
     """Logger for visualizing bin packing states."""

@@ -4,7 +4,6 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Dict, Tuple, List
 
-
 class HeightMapCNN(nn.Module):
     """CNN module for encoding the height map."""
     

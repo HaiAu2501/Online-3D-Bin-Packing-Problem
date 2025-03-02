@@ -4,7 +4,6 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Dict, Tuple, List, Optional, Union
 
-
 class MetaNetwork(nn.Module):
     """
     MetaNetwork that combines and ensembles gradient-based and heuristic refinement results.
@@ -159,7 +158,7 @@ class MetaNetwork(nn.Module):
         """
         assert grad_logits.shape == heur_logits.shape, \
             f"grad_logits and heur_logits must have the same shape, got {grad_logits.shape} and {heur_logits.shape}"
-            
+
         batch_size = grad_logits.size(0)
         
         # Flatten logits for feature extraction

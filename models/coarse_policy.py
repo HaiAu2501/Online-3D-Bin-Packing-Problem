@@ -4,7 +4,6 @@ import torch.nn.functional as F
 import numpy as np
 from typing import Dict, Tuple, List, Optional
 
-
 class CoarsePolicy(nn.Module):
     """
     CoarsePolicy network for predicting coarse logits.

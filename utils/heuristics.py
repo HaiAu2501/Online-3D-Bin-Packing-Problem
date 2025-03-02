@@ -3,7 +3,6 @@ import numpy as np
 from typing import Dict, Tuple, List, Optional, Union
 from .gradients import compute_objective_function
 
-
 def heuristic_refinement(
     height_map: torch.Tensor,
     fine_logits: torch.Tensor,
@@ -92,7 +91,6 @@ def heuristic_refinement(
     refined_probs = torch.softmax(masked_logits.view(batch_size, -1), dim=1).view(batch_size, W, L)
     
     return refined_logits, refined_probs
-
 
 def greedy_search(
     height_map: torch.Tensor,
@@ -187,7 +185,6 @@ def greedy_search(
             refined_logits[b, best_x, best_y] = 10.0  # High value to make it dominant
     
     return refined_logits
-
 
 def simulated_annealing(
     height_map: torch.Tensor,

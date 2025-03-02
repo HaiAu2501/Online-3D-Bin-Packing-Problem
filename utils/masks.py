@@ -2,7 +2,6 @@ import torch
 import numpy as np
 from typing import Dict, Tuple, List, Optional, Union
 
-
 def create_coarse_mask(
     height_map: torch.Tensor,
     buffer: torch.Tensor,
@@ -81,7 +80,6 @@ def create_coarse_mask(
                                 continue
     
     return mask
-
 
 def create_fine_mask(
     height_map: torch.Tensor,  # [batch_size, W, L]

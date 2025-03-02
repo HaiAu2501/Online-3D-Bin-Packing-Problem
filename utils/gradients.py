@@ -3,31 +3,6 @@ import numpy as np
 from typing import Dict, Tuple, List, Optional, Union
 
 def compute_support_ratio(
-    height_map: torch.Tensor,
-    item_dims: torch.Tensor,
-    rotation: torch.Tensor,
-    position: torch.Tensor
-) -> torch.Tensor:
-    """Compute the support ratio for items at given positions."""
-    batch_size = height_map.size(0)
-    device = height_map.device
-    
-    # Extract item dimensions
-    w = item_dims[:, 0]
-    l = item_dims[:, 1]
-    
-    # Apply rotation
-    w_rotated = torch.where(rotation == 0, w, l)
-    l_rotated = torch.where(rotation == 0, l, w)
-    
-    # Extract positions
-    x = position[:, 0]
-    y = position[:, 1]
- 
-    # Initialize support ratios
-    support_ratios = torch.zeros(batch_size, device=device)
-    
-def compute_support_ratio(
     height_map: torch.Tensor,  # [batch_size, W, L]
     item_dims: torch.Tensor,   # [batch_size, 3]
     rotation: torch.Tensor,    # [batch_size]
@@ -98,7 +73,6 @@ def compute_support_ratio(
     
     return support_ratios
 
-
 def compute_volume_utilization(
     height_map: torch.Tensor,
     item_dims: torch.Tensor,
@@ -167,7 +141,6 @@ def compute_volume_utilization(
         utilizations[b] = volume - penalty
     
     return utilizations
-
 
 def compute_objective_function(
     height_map: torch.Tensor,
