@@ -539,6 +539,15 @@ class PPOAgent:
             # Track epoch metrics
             epoch_metrics = {key: 0 for key in metrics.keys()}
             
+            # Giảm learning rate ở các epoch đầu tiên để tránh KL cao
+            if self.step_counter < 1000:
+                lr_scale = min(1.0, self.step_counter / 1000)
+                for optimizer in [self.encoder_optimizer, self.coarse_policy_optimizer,
+                                self.fine_policy_optimizer, self.meta_network_optimizer,
+                                self.value_network_optimizer]:
+                    for param_group in optimizer.param_groups:
+                        param_group['lr'] = current_lr * lr_scale
+            
             for batch in batches:
                 # Get batch data
                 states = batch['states']
@@ -688,7 +697,7 @@ class PPOAgent:
                 returns = self.advantage_estimator.compute_returns(advantages, values)
                 
                 # Normalize advantages
-                advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-10)
+                advantages = normalize_advantages(advantages)
                 
                 # Compute probability ratio
                 ratios = action_probs / (old_probs + 1e-10)
@@ -793,8 +802,14 @@ class PPOAgent:
             for key in metrics:
                 metrics[key] += epoch_metrics[key] / self.n_epochs
             
-            # Early stopping based on KL divergence
-            if epoch_metrics['kl_div'] > 1.5 * self.target_kl:
+            # Điều chỉnh ngưỡng KL dựa trên số lượng bước huấn luyện
+            adaptive_kl_target = self.target_kl
+            if self.step_counter < 1000:
+                # Cho phép KL cao hơn ở giai đoạn đầu
+                adaptive_kl_target = self.target_kl * 3.0
+                
+            # Early stopping với ngưỡng KL thích ứng
+            if epoch_metrics['kl_div'] > 1.5 * adaptive_kl_target:
                 print(f"Early stopping at epoch {epoch+1}/{self.n_epochs} due to high KL divergence")
                 break
 
@@ -986,3 +1001,17 @@ class PPOAgent:
             eval_rewards.append(episode_reward)
         
         return np.mean(eval_rewards)
+
+def normalize_advantages(advantages):
+    """Chuẩn hóa advantages một cách an toàn."""
+    if advantages.numel() <= 1:
+        return advantages  # Không cần chuẩn hóa nếu chỉ có 1 phần tử
+    
+    mean = advantages.mean()
+    std = advantages.std()
+    
+    # Tránh chia cho 0 hoặc giá trị rất nhỏ
+    if std.item() < 1e-8:
+        return advantages - mean
+    
+    return (advantages - mean) / (std + 1e-8)

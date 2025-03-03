@@ -158,14 +158,21 @@ class CoarsePolicy(nn.Module):
             if top_k > 1:
                 top_k_values, top_k_indices = torch.topk(flat_probs[b], min(top_k, flat_probs[b].size(0)))
                 
-                # Quyết định có thăm dò hay không
-                if torch.rand(1).item() < exploration_prob:
-                    # Thăm dò: chọn ngẫu nhiên từ top-k
-                    selected_idx = torch.multinomial(top_k_values, 1).item()
-                    flat_index = top_k_indices[selected_idx].item()
+                # Kiểm tra xem có giá trị dương nào không
+                if torch.sum(top_k_values > 0) > 0:
+                    # Quyết định có thăm dò hay không
+                    if torch.rand(1).item() < exploration_prob:
+                        # Thăm dò: chọn ngẫu nhiên từ top-k
+                        # Đảm bảo các giá trị dương để tránh lỗi multinomial
+                        valid_probs = torch.max(top_k_values, torch.ones_like(top_k_values) * 1e-8)
+                        selected_idx = torch.multinomial(valid_probs, 1).item()
+                        flat_index = top_k_indices[selected_idx].item()
+                    else:
+                        # Khai thác: chọn index tốt nhất
+                        flat_index = top_k_indices[0].item()
                 else:
-                    # Khai thác: chọn index tốt nhất
-                    flat_index = top_k_indices[0].item()
+                    # Không có hành động hợp lệ, chọn random
+                    flat_index = torch.randint(0, flat_probs[b].size(0), (1,)).item()
             else:
                 # Luôn chọn index tốt nhất nếu top_k = 1
                 flat_index = torch.argmax(flat_probs[b]).item()
